@@ -11,17 +11,102 @@ import asyncio
 import json
 import logging
 import os
+import re as _quality_re
 import time
 import yaml
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlparse as _quality_urlparse
 
 from app.core.config import settings
 from app.strategies.turtle.utils import find_stock_dir
 
 logger = logging.getLogger(__name__)
+
+
+# ══════════════════════════════════════════════════════════════
+# v0.7.6: WebSearch 置信度质量加权 (确定性规则引擎，非 LLM)
+# ══════════════════════════════════════════════════════════════
+
+def _source_credibility(url: str) -> float:
+    """来源可信度 (0.0~1.0)，基于域名分类"""
+    if not url:
+        return 0.0
+    try:
+        domain = _quality_urlparse(url).netloc.lower()
+    except Exception:
+        return 0.1
+
+    OFFICIAL = {'sse.com.cn', 'szse.cn', 'csrc.gov.cn', 'cninfo.com.cn'}
+    AUTHORITATIVE = {'bloomberg.com', 'reuters.com', 'wsj.com'}
+    RESEARCH = {'dfcfw.com', 'research'}
+    MAINSTREAM = {
+        'caixin.com', '36kr.com', 'cs.com.cn', 'people.com.cn',
+        'yicai.com', 'cls.cn', 'eastmoney.com', 'stcn.com',
+        'guancha.cn', 'yemacaijing.com', 'jiemian.com',
+    }
+    AGGREGATOR = {
+        'sohu.com', 'sina.com', 'mp.cnfol.com', '163.com',
+        'qq.com', 'ifeng.com', 'fengkouapp.com', 'iyiou.com',
+        'pedaily.cn',
+    }
+
+    if any(d in domain for d in OFFICIAL):
+        return 1.0
+    if any(d in domain for d in AUTHORITATIVE):
+        return 0.8
+    if any(d in domain for d in RESEARCH):
+        return 0.7
+    if any(d in domain for d in MAINSTREAM):
+        return 0.5
+    if any(d in domain for d in AGGREGATOR):
+        return 0.3
+    return 0.1
+
+
+def _info_density(content: str) -> float:
+    """信息密度 (0.0~1.0)，基于内容中数字+单位组合的数量"""
+    if not content:
+        return 0.0
+    hits = len(_quality_re.findall(
+        r'\b\d+\.?\d*\s*(万亿|千亿|百亿|亿|[万千百]|元|%|倍|个)\b', content,
+    ))
+    if hits >= 5:
+        return 1.0
+    if hits >= 2:
+        return 0.7
+    if hits >= 1:
+        return 0.4
+    if len(content) > 80:
+        return 0.2
+    return 0.0
+
+
+def _recency(text: str) -> float:
+    """时效性 (0.0~1.0)，基于文本中出现的年份"""
+    years = _quality_re.findall(r'(20\d{2})\s*年', text)
+    if not years:
+        return 0.3
+    latest = max(int(y) for y in years)
+    current = 2026
+    if latest >= current - 1:
+        return 1.0
+    if latest >= current - 3:
+        return 0.5
+    return 0.2
+
+
+def _quality_label(score: float) -> str:
+    """质量总分 → 置信度四级标签"""
+    if score >= 2.0:
+        return "HIGH"
+    if score >= 1.2:
+        return "MEDIUM"
+    if score > 0.0:
+        return "LOW"
+    return "NONE"
 
 
 class CoordinatorState(str, Enum):
@@ -211,7 +296,9 @@ class TurtleCoordinator:
         cq_fail = 0
         pr_pass = 0
         pr_fail = 0
-        dim_fail_stats = {"dim1": 0, "dim2": 0, "dim3": 0, "dim4": 0, "dim5": 0}
+        pr_excluded = 0  # v0.6.20: disposable_cash_avg <= 0 硬排除
+        dim_fail_stats = {"dim1": 0, "dim2": 0, "dim3": 0, "dim4": 0, "dim5": 0,
+                          "dim6": 0, "dim7": 0, "dim8": 0}
         pr_cv_warnings = 0
 
         print(f"[Step 3-5] Computing CQ/PR + soft gates for {len(candidates)} candidates...", flush=True)
@@ -227,7 +314,7 @@ class TurtleCoordinator:
                 f"  [Progress] {done}/{len(candidates)} "
                 f"({done/len(candidates)*100:.0f}%) "
                 f"| CQ通过: {cq_pass} | PR通过: {pr_pass} "
-                f"| 股池: {len(pool)} | 缺失: {skipped_missing} "
+                f"| 股池: {len(pool)} | PR排除: {pr_excluded} | 缺失: {skipped_missing} "
                 f"| 速率 {rate:.1f}只/s | 预计剩余 {eta:.0f}s",
                 flush=True,
             )
@@ -318,6 +405,14 @@ class TurtleCoordinator:
                 },
             }
 
+            # v0.6.20: 可支配现金均值 ≤ 0 → 硬排除，不入股池
+            if pr_result.disposable_cash_avg <= 0:
+                pr_excluded += 1
+                logger.info(f"{ts_code}: 可支配现金均值={pr_result.disposable_cash_avg:.1f} <= 0, 硬排除不入股池")
+                if should_print:
+                    _print_progress(i)
+                continue
+
             pool.append({
                 "ts_code": ts_code,
                 "name": candidate.name,
@@ -350,7 +445,10 @@ class TurtleCoordinator:
             f"dim2(FCF)={dim_fail_stats['dim2']}, "
             f"dim3(应收)={dim_fail_stats['dim3']}, "
             f"dim4(存货)={dim_fail_stats['dim4']}, "
-            f"dim5(OCF_CV)={dim_fail_stats['dim5']}"
+            f"dim5(OCF_CV)={dim_fail_stats['dim5']}, "
+            f"dim6(FCF分红覆盖)={dim_fail_stats['dim6']}, "
+            f"dim7(供应商挤压)={dim_fail_stats['dim7']}, "
+            f"dim8(有息负债趋势)={dim_fail_stats['dim8']}"
         )
 
         self.ctx.state = CoordinatorState.READY
@@ -364,18 +462,20 @@ class TurtleCoordinator:
             StepResult(
                 step_name="pr_gate",
                 success=True,
-                message=f"股池: {len(pool)} 只 (PR通过: {pr_pass}, 标记: {pr_fail}, CV预警: {pr_cv_warnings})",
-                data={"pool_size": len(pool), "pr_pass": pr_pass, "pr_fail": pr_fail},
+                message=f"股池: {len(pool)} 只 (PR通过: {pr_pass}, 标记: {pr_fail}, "
+                        f"硬排除(可支配现金≤0): {pr_excluded}, CV预警: {pr_cv_warnings})",
+                data={"pool_size": len(pool), "pr_pass": pr_pass, "pr_fail": pr_fail,
+                      "pr_excluded": pr_excluded},
             ),
         ])
 
         logger.info(
             f"全量刷新完成: 候选{len(candidates)} → "
-            f"CQ通过{cq_pass}/未通过{cq_fail} → PR通过{pr_pass}/未通过{pr_fail} → 股池{len(pool)}"
+            f"CQ通过{cq_pass}/未通过{cq_fail} → PR通过{pr_pass}/未通过{pr_fail}/排除{pr_excluded} → 股池{len(pool)}"
         )
         print(
             f"[Done] 全量刷新完成: 候选{len(candidates)} → "
-            f"CQ通过{cq_pass}/未通过{cq_fail} → PR通过{pr_pass}/未通过{pr_fail} → 软门股池{len(pool)}",
+            f"CQ通过{cq_pass}/未通过{cq_fail} → PR通过{pr_pass}/未通过{pr_fail}/排除{pr_excluded} → 软门股池{len(pool)}",
             flush=True,
         )
 
@@ -757,28 +857,39 @@ class TurtleCoordinator:
                             data = await resp.json()
                             answer = data.get("answer", "")
                             if answer:
+                                qs_a = _info_density(answer) + _recency(answer)  # answer无URL
                                 all_snippets.append({
                                     "type": "answer",
                                     "content": answer,
-                                    "confidence": "MEDIUM",
+                                    "confidence": _quality_label(qs_a),
+                                    "quality_score": round(qs_a, 2),
                                 })
                             for r in data.get("results", [])[:3]:
+                                url_r = r.get("url", "")
+                                content_r = r.get("content", "")
+                                qs_r = (
+                                    _source_credibility(url_r)
+                                    + _info_density(content_r)
+                                    + _recency(content_r)
+                                )
                                 all_snippets.append({
                                     "type": "result",
                                     "title": r.get("title", ""),
-                                    "url": r.get("url", ""),
-                                    "content": r.get("content", ""),
-                                    "confidence": "MEDIUM",
+                                    "url": url_r,
+                                    "content": content_r,
+                                    "confidence": _quality_label(qs_r),
+                                    "quality_score": round(qs_r, 2),
                                 })
             except Exception as e:
                 logger.error(f"Tavily search '{query}' 失败: {e}")
 
-        # 置信度标注
-        if len(all_snippets) >= 6:
+        # v0.7.6: 质量加权置信度 (来源可信度 + 信息密度 + 时效性)
+        total_quality = sum(s.get("quality_score", 0) for s in all_snippets)
+        if total_quality >= 12:
             confidence = "HIGH"
-        elif len(all_snippets) >= 3:
+        elif total_quality >= 6:
             confidence = "MEDIUM"
-        elif len(all_snippets) > 0:
+        elif total_quality >= 2:
             confidence = "LOW"
         else:
             confidence = "NONE"
@@ -878,6 +989,26 @@ class TurtleCoordinator:
         if not basic.get("total_mv") or basic.get("total_mv", 0) <= 0:
             logger.warning(f"{ts_code}: total_mv 缺失或为0，跳过PR计算")
             return False
+
+        # v0.7.1: 检查 v0.7.0 新增字段是否存在于缓存中，缺失则 WARNING
+        optional_fields = {
+            "cashflow": ["dividend_paid_cf"],           # dim6 FCF分红覆盖
+            "balance_sheet": ["accounts_payable", "notes_payable",  # dim7 供应商挤压
+                            "st_borrow", "lt_borrow", "bonds_payable",  # dim8 有息负债
+                            "noncurrent_liab_due_in_1y"],
+        }
+        for parent, children in optional_fields.items():
+            for child in children:
+                present = any(
+                    parent in f and child in f[parent]
+                    for f in financials
+                )
+                if not present:
+                    logger.warning(
+                        f"{ts_code}: {parent}.{child} 在所有年份均缺失，"
+                        f"相关 CQ 维度将因数据不足标记为通过。"
+                        f"建议 --full 全量重拉获取该字段。"
+                    )
 
         return True
 

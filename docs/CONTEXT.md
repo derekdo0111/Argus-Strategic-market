@@ -1,6 +1,6 @@
 # Investment Strategy — 领域上下文
 
-> 版本: v0.6.15 | 更新: 2026-06-19
+> 版本: v0.7.7 | 更新: 2026-06-22
 
 ---
 
@@ -19,7 +19,7 @@
 - **门 (Gate)**: 候选池中的个股依次通过的门控检查。
   - v0.2.x: CQ/PR 为硬门（不通过即淘汰），基本面/估值为软门（标记不淘汰）
   - **v0.3.0**: **全部改为软门**（标记不淘汰），CQ/PR 判定结果交 QRV Agent 综合研判
-- **股池 (Stock Pool)**: 通过选股器筛选 + 确定性计算完成的股票列表，按穿透回报率降序排列。
+- **股池 (Stock Pool)**: 通过选股器筛选 + 确定性计算完成的股票列表，按穿透回报率降序排列。**v0.6.20: 可支配现金均值 ≤ 0 硬排除不入股池**。
 
 ### 龟龟策略流程 (v0.5.0)
 
@@ -54,14 +54,15 @@ Step 8: QRV Agent v3 → DataSummarizer v2预处理 → 单次LLM → qrv_analys
 | **R (Resilience)** | R1 外部环境+国家战略 | 行业周期、风险清单、国家规划定位 |
 | | R2 管理层+人才结构 | 管理层画像、分红回购、研发人员占比/人均创收 |
 | | R3 控股结构 | 实控人风险、关联交易 |
-| **V (Valuation)** | V1 价值陷阱 | CQ 5维度 + 资产负债快照 |
+| | R4 重大事件与资本运作 | 定增/并购/重组/重大合同/诉讼，跨维度联动分析 ★v0.7.3 |
+| **V (Valuation)** | V1 价值陷阱 | CQ 8维度 + 资产负债快照 |
 | | V2 历史分位 | PE/PB/股息率历史位置 + 同行对比 |
 | | V3 压力测试 | PR穿透回报率 + 三情景预估 |
 
 ### 核心公式
 - **穿透回报率 (PR)** v2: PR = (可支配现金均值 × 分配比率 + 回购注销) / 总市值 × 100%
 - **可支配现金（5年逐期）**: 经营CF − CAPEX − 并购子公司 − max(0, 长投净增) − 财务费用
-- **现金质量5子维度**: 见 `rules/v2/turtle_cash_quality.yaml`
+- **现金质量8子维度**: 见 `rules/v2/turtle_cash_quality.yaml`
 
 ### 数据流
 - **全量刷新**: 选股器 → 数据拉取(**v0.5.3: 入口归一化亿元**) → 确定性计算 → 软门标记 → 股池。定时任务触发。
@@ -71,9 +72,9 @@ Step 8: QRV Agent v3 → DataSummarizer v2预处理 → 单次LLM → qrv_analys
 
 ### 技术角色
 - **Coordinator**: 混合模式编排器。`turtle-coordinator.md` 定义流程，`coordinator.py` 执行编排。
-- **WebSearch Agent**: Tavily API 联网搜索，5次搜索覆盖Q/R/V，输出带置信度标注。
-- **WebSearchExtractor** (v0.5.0): 规则引擎从 websearch 预提取结构化事实 (收入结构/市占率/管理层/人才/政策)。
-- **DataSummarizer** (v2.0.0): 预处理引擎，A1 20+字段 + A7 生意属性 + Layer 3 数据充分性评估，按行业动态加载 profile。
+- **WebSearch Agent**: Tavily API 联网搜索，5次搜索覆盖Q/R/V，输出带**质量加权置信度标注**（来源可信度+信息密度+时效性三维打分，0-3分/条，总分≥12→HIGH, ≥6→MEDIUM, ≥2→LOW）。
+- **WebSearchExtractor** (v0.7.3): 规则引擎从 websearch 预提取结构化事实 (收入结构/市占率/管理层/人才/政策 + 重大事件)。
+- **DataSummarizer** (v2.3.0): 预处理引擎，A1 20+字段 + A7 生意属性 + Layer 3 数据充分性评估，按行业动态加载 profile。**v0.7.6**: reference_index 置信度升级为质量加权(来源可信度+信息密度+时效性)，confidence_summary 联动高标准阈值。
 - **QRV Agent**: Q/R/V 三维度综合分析，CFA角色单次LLM调用，输出 `qrv_analysis.md` + `.json`。
 
 ---

@@ -1,4 +1,4 @@
-import { useRef, useCallback, Fragment } from 'react';
+import { useRef, useCallback, useState, Fragment } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import type { StockPoolItem, GateResult, AnalysisReport } from '../types';
@@ -27,6 +27,8 @@ export default function StockPool({ selectedStock, onSelectStock, onToggleSideba
   const queryClient = useQueryClient();
   const hoverTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const HOVER_DELAY = 250; // 悬停 250ms 后预加载
+
+  const [highlightIdx, setHighlightIdx] = useState(-1);
 
   const {
     data: pool = [],
@@ -94,8 +96,24 @@ export default function StockPool({ selectedStock, onSelectStock, onToggleSideba
     }
   }, []);
 
+  // P2: 键盘快捷键 ↑↓ 浏览 Enter 选中 Esc 取消
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIdx(prev => Math.min(prev + 1, Math.max(pool.length - 1, 0)));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIdx(prev => Math.max(prev - 1, -1));
+    } else if (e.key === 'Enter' && highlightIdx >= 0 && highlightIdx < pool.length) {
+      const item = pool[highlightIdx];
+      onSelectStock(item.ts_code, item.name);
+    } else if (e.key === 'Escape') {
+      if (highlightIdx >= 0) setHighlightIdx(-1);
+    }
+  }, [pool, highlightIdx, onSelectStock]);
+
   return (
-    <div className={styles.container}>
+    <div className={styles.container} tabIndex={0} onKeyDown={handleKeyDown}>
       <div className={styles.header}>
         <button className={styles.hamburger} onClick={onToggleSidebar} title="切换侧边栏">
           <HamburgerIcon />
@@ -129,7 +147,7 @@ export default function StockPool({ selectedStock, onSelectStock, onToggleSideba
               </tr>
             </thead>
             <tbody>
-              {pool.map((item) => {
+              {pool.map((item, i) => {
                 const isSelected = selectedStock?.ts_code === item.ts_code;
                 const hasScores = item.scores && item.scores.total > 0;
                 const scorePct = hasScores ? item.scores!.total * 10 : 0;
@@ -137,7 +155,7 @@ export default function StockPool({ selectedStock, onSelectStock, onToggleSideba
                 return (
                   <Fragment key={item.ts_code}>
                     <tr
-                      className={`${styles.row} ${isSelected ? styles.selected : ''}`}
+                      className={`${styles.row} ${isSelected ? styles.selected : ''} ${i === highlightIdx ? styles.highlighted : ''}`}
                       onClick={() => onSelectStock(item.ts_code, item.name)}
                       onMouseEnter={() => handleMouseEnter(item)}
                       onMouseLeave={() => handleMouseLeave(item.ts_code)}

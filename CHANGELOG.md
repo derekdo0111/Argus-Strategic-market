@@ -4,6 +4,569 @@ All notable changes to Investment Strategy project.
 
 ---
 
+## v0.7.7 (2026-06-22)
+
+### Fixed — 三项前端修复 + 股池分数实时更新
+
+#### 1. 引用点击跳转修复 (ReportViewer.tsx + .module.css)
+- `mdComponents.a` 组件转发 `{...rest}` → `id`/`name` 等属性不再被丢弃，锚点跳转正常
+- `isDefaultExpanded` 正则新增 `参考来源|资料来源|引用` → 参考来源区域默认展开，DOM 中锚点已存在
+- CSS 全局添加 `cite { cursor: pointer }` → 引用元素有视觉点击反馈
+
+#### 2. 盈利质量趋势着色 (ReportViewer.tsx + .module.css)
+- `TdRenderer` 新增 `TREND_MAP`：识别 `up`/`down`/`stable`/`吃老本`/`收缩` → 自动着色
+  - `up` → 绿色 ▲ up / `down` → 红色 ▼ down / `stable` → 灰色 ─ stable
+- CSS 新增 `.trendUp`(绿) / `.trendDown`(红) / `.trendStable`(灰)
+
+#### 3. 股池分数实时更新 (stocks.py)
+- `_run_analysis_background` done 时读取 `qrv_analysis.json` 的 `scores`，回填到 `_pool_cache`
+- 前端股池栏无需等缓存过期即可看到最新的 QRV 分数
+
+---
+
+## v0.7.6 (2026-06-22)
+
+### Changed — 置信度质量加权 + 前端引用锚点/TOC 修复
+
+**问题**: 四个用户反馈：
+1. WebSearch 置信度全是 HIGH（阈值太松：≥6条snippet 即 HIGH，每模块 12+条永远满足）
+2. 报告中引用显示为裸 `[W-q-1](#w-q-1)`，无法点击跳转
+3. TOC 导航点击 V3 子标题跳转到 V 父标题
+4. 引用锚点 `<a id="...">` 被 rehype-sanitize 剥离，跳转失效
+
+**方案**:
+
+#### 1. 置信度质量加权 (coordinator.py)
+- 新增 3 个确定性打分函数（零 LLM）：
+  - `_source_credibility(url)` → 基于域名分类（官方1.0 / 权威0.8 / 研报0.7 / 主流媒体0.5 / 聚合0.3 / 自媒体0.1）
+  - `_info_density(content)` → 基于数字+单位数量（≥5→1.0, ≥2→0.7, ≥1→0.4）
+  - `_recency(text)` → 基于年份（1年内1.0, 1-3年0.5, 3年+0.2）
+- 每条 snippet 打总分 0~3 → 按质量总分判定模块置信度：
+  - 总分≥12→HIGH, ≥6→MEDIUM, ≥2→LOW, <2→NONE
+- 每 snippet 写入 `quality_score`（新增字段）+ `confidence`（质量标签）
+
+#### 2. 前端引用锚点修复 (ReportViewer.tsx)
+- **2a**: `preprocessCitations` 正则加 `(?!\()` 负向前瞻 → `[W-q-1](#w-q-1)` 不被正则误匹配，react-markdown 正常渲染为 `<a>` 链接
+- **2b**: `rehype-sanitize` schema 新增 `a[id]`、`a[name]` 属性白名单 → `<a id="w-q-1">` 锚点不被剥离
+
+#### 3. TOC 子标题导航修复 (ReportViewer.tsx)
+- TOC 子项 `onClick`：`item.id` → `sub.id`
+- `scrollToSection` 新增 h3 查找逻辑：优先 `document.querySelector('h3[id="..."]')`，fallback h2 section
+- 父 section 自动展开
+
+### Files Changed
+- `backend/app/strategies/turtle/coordinator.py` — +85行 (3 质量函数 + _tavily_search snippet/模块置信度改造)
+- `backend/rules/v2/turtle_qrv.yaml` — 置信度定义更新（计数→质量加权）
+- `backend/app/strategies/turtle/turtle-coordinator.md` — v0.7.5→v0.7.6 + Step 7 置信度说明
+- `docs/CONTEXT.md` — v0.7.5→v0.7.6 + DataSummarizer v2.3.0
+- `frontend/src/components/ReportViewer.tsx` — 引用正则 + sanitize schema + TOC h3 导航 (~+30行)
+- `backend/app/core/config.py` — 0.7.5→0.7.6
+- `backend/pyproject.toml` — 0.7.5→0.7.6
+- `frontend/package.json` — 0.7.5→0.7.6
+- `CHANGELOG.md` — 本条目
+
+### Verified
+- ✅ 98/98 pytest 全部通过
+- ✅ TypeScript tsc --noEmit 零错误
+- ✅ Linter 零错误
+- ✅ 纯确定性规则引擎，零 LLM 调用
+
+### Migration Notes
+- 已缓存的 `websearch.yaml` 中 snippet 的 `confidence` 仍是旧值（MEDIUM），需 `--force-websearch` 重搜才能获得新质量加权置信度
+- `quality_score` 为新字段，老缓存中缺失，不影响下游（`data_summarizer.py` 兼容兜底）
+
+---
+
+## v0.7.5 (2026-06-21)
+
+### Added — 参考来源锚点跳转 + 置信度使用规则 (Prompt + 数据层)
+
+**问题**: 用户反馈两个设计缺口：
+1. 报告中 `[W-q-3]` 等引用标记只是纯文本，无法点击跳转到参考来源
+2. websearch 有置信度数据（HIGH/MEDIUM/LOW/NONE），但 Prompt 没有告诉 LLM 如何使用
+
+**方案（零计算逻辑变更）**:
+
+#### 1. 锚点跳转 (turtle_qrv.yaml Prompt)
+- 核心铁律第 2 条：`[A2]` 纯文本 → 必须写成可点击 `[A2](#a2)` + 参考来源行前放 `<a id="a2"></a>` 锚点
+- W-引用表模板：标记列从裸 `[W-q-1]` → `<a id="w-q-1"></a>[W-q-1](#w-q-1)`
+- A-引用表模板：标记列从裸 `[A1]` → `<a id="a1"></a>[A1](#a1)`
+- 前端需 `rehype-raw` 插件支持 HTML 锚点（已安装）
+
+#### 2. 置信度使用规则 (turtle_qrv.yaml Prompt 新增整节)
+- 置信度四级定义 (HIGH/MEDIUM/LOW/NONE) + 对应引用规则
+- LOW 置信度来源不可作为主要论据，强结论需标注「⚠️ 低置信度」
+- 某维度全 LOW/NONE → 开篇声明外部数据可信度不足
+- W-引用表新增"置信度"列，从 reference_index 提取
+
+#### 3. 数据层注入置信度 (data_summarizer.py v2.1→v2.2)
+- `_build_reference_index()` W 条目新增 `module_confidence` + `snippet_confidence` 字段
+- 新增 `confidence_summary` 块，汇总 5 模块置信度 + overall 评级
+- overall 评级规则: HIGH≥3→HIGH, HIGH+MEDIUM≥3→MEDIUM, 其他→LOW→NONE
+
+### Files Changed
+- `backend/rules/v2/turtle_qrv.yaml` — v4.1→v4.2: +锚点跳转指令 +置信度使用规则整节 +W/A引用表模板加锚点+置信度列 (~+40行)
+- `backend/app/services/data_summarizer.py` — v2.1→v2.2: W条目加module_confidence/snippet_confidence + confidence_summary (~+25行)
+- `backend/app/strategies/turtle/turtle-coordinator.md` — v0.7.4→v0.7.5 + Step 7 置信度说明 + Step 8 输出质量
+- `docs/CONTEXT.md` — 版本号 + DataSummarizer 版本
+- `backend/app/core/config.py` — 版本 0.7.4→0.7.5
+- `backend/pyproject.toml` — 版本 0.7.4→0.7.5
+- `frontend/package.json` — 版本 0.7.4→0.7.5
+- `CHANGELOG.md` — 本条目
+
+### Verified
+- ✅ 98/98 测试全部通过
+- ✅ 纯 Prompt + 数据索引层改动，零计算逻辑变更
+
+---
+
+## v0.7.4 (2026-06-21)
+
+### Fixed — 报告输出质量四件套 (Prompt + 数据锚点)
+
+**问题**: 用户反馈四个报告质量问题：
+1. 报告段落不稳定 — 一会儿以"质量分析"开头，一会儿以"整体研判"/"分析摘要"开头，导航栏缺段
+2. 超链接无 URL — `[W-q-2]` 不可点击、`[A7]` 在参考来源中完全消失
+3. 表格趋势 up/down/stable 不直观
+4. 估值区间建议每次输出差距极大，LLM 凭感觉估 PE
+
+**方案**:
+
+#### 1. 报告结构强制 (turtle_qrv.yaml Prompt)
+- 在 Prompt 最前面新增强制输出结构声明，明确 7 个顶级 `##` 标题的固定顺序和名称
+- LLM 不得在 Q 之前添加"分析摘要""概述"等章节
+- 前端导航栏直接依赖这些 `##` 解析，不按模板输出 = 导航栏缺失
+
+#### 2. 参考来源完整化 (turtle_qrv.yaml + data_summarizer.py)
+- Prompt 中参考来源分两类：**W-引用**（websearch URL，必须有可点击链接）和 **A-引用**（Data Summarizer 数据来源 + 关键原始数值）
+- `data_summarizer.py` `_build_reference_index()` 新增 A1-A8 数据锚点，包含：
+  - A1: 最新年营收/净利/ROE（亿/%）
+  - A2: 收入结构线索
+  - A3: 5年分红合计（亿）
+  - A4: CQ 通过维度数 + FAIL维度
+  - A5: PR%/门槛%
+  - A6: PE/PB/股息率
+  - A7: 应收周转天数/固定资产占比%
+  - A8: PE 当前值 + 分位点（p25/median/p75）
+- LLM 在报告末尾参考来源中可直接提取这些数值填入 A-引用表格
+
+#### 3. 趋势箭头 (turtle_qrv.yaml Prompt)
+- `up`/`down`/`stable` → `↑`/`↓`/`→`，同时禁止使用英文词
+
+#### 4. 估值区间公式约束 (turtle_qrv.yaml Prompt)
+- 低估 PE = min(当前PE × 0.7, A8.p25)
+- 合理 PE = A8.median
+- 高估 PE = max(当前PE × 1.3, A8.p75)
+- 目标价 = 最新年度 EPS × PE
+- 明确禁止凭感觉估 PE
+
+### Files Changed
+- `backend/rules/v2/turtle_qrv.yaml` — v4→v4.1: +结构强制 +箭头 +估值公式 +A系列参考来源 (~+70行)
+- `backend/app/services/data_summarizer.py` — v2.0→v2.1: reference_index +A1-A8 (~+90行)
+- `backend/app/strategies/turtle/turtle-coordinator.md` — Step 8 标注 v0.7.4 输出质量
+- `docs/CONTEXT.md` — 版本号 + DataSummarizer 版本
+- `backend/app/core/config.py` — 版本 0.7.3→0.7.4
+- `backend/pyproject.toml` — 版本 0.7.3→0.7.4
+- `frontend/package.json` — 版本 0.7.3→0.7.4
+- `CHANGELOG.md` — 本条目
+
+### Verified
+- ✅ 98/98 测试全部通过
+- ✅ 纯 Prompt + 数据索引层改动，零计算逻辑变更
+
+---
+
+## v0.7.3 (2026-06-21)
+
+### Added — R4 重大事件与资本运作 (QRV v4 框架)
+
+**问题**: 分众传媒 3 月公告定增收购新潮传媒 (83.5 亿)，此类重大资本运作事件在搜索/提取/分析三层均漏掉——搜索未搜"定增""并购"，提取器无企业事件覆盖，QRV 10 维度无一要求分析。
+
+**方案（三层联动，不新增搜索成本）**:
+
+| 层 | 改动 | 说明 |
+|---|------|------|
+| 搜索层 | `q_websearch` 新增 1 条关键词 | `"定增 并购 收购 资产重组 资本运作 重大合同 重大事项"` |
+| 提取层 | `WebSearchExtractor` 新增 `_extract_corporate_events()` | 5 类事件正则提取：定增/并购/重组/重大合同/诉讼 |
+| 分析层 | QRV prompt 新增 R4 模块 | 事件清单表 + 影响分析 + 跨维度联动(Q2护城河/Q3增长/R3控股/V1价值陷阱) |
+
+**事件提取器详情** (`websearch_extractor.py`):
+
+| 事件类型 | 提取字段 | 正则示例 |
+|---------|---------|---------|
+| `placement` (定增) | amount_billion, purpose | `(定增\|非公开发行\|发行股份\|募集资金)` |
+| `merger` (并购) | target, amount_billion | `(收购\|并购\|要约收购)` |
+| `restructure` (重组) | description | `(重大资产重组\|资产注入\|资产置换\|借壳上市)` |
+| `major_contract` (重大合同) | amount_billion, counterparty | `(中标\|签约\|签署.*(合同\|协议\|订单))` |
+| `litigation` (重大诉讼) | amount_billion, type | `(诉讼\|仲裁\|起诉\|被诉\|应诉)` |
+
+**R4 模块结构**:
+- R4.1: 近期重大事件清单表（日期/类型/金额/量化影响）
+- R4.2: 事件影响分析（短期/中长期，每个事件 80 字）
+- R4.3: 跨维度联动表（并购→Q2护城河/Q3增长，定增→R3控股/V1价值陷阱）
+- R4.4: 综合评判（扩张期/整合期/收缩期/动荡期）
+
+**分析框架**: QRV v3 → v4，10 模块 → 11 模块，综合打分卡新增 R4 行。
+
+### Files Changed
+- `backend/rules/v2/turtle_qrv.yaml` — v3→v4: +1 搜索关键词, +R4 分析模块, +R4 prompt
+- `backend/app/services/websearch_extractor.py` — +`_extract_corporate_events()` (~80行)
+- `backend/app/services/data_summarizer.py` — data_sufficiency +R4_corporate_events
+- `backend/app/strategies/turtle/turtle-coordinator.md` — Step 7/7.5/8 同步 11 模块
+- `docs/CONTEXT.md` — 版本号 + R4 模块 + WebSearchExtractor 更新
+- `backend/app/core/config.py` — 版本 0.7.1 → 0.7.3
+- `backend/pyproject.toml` — 版本 0.7.1 → 0.7.3
+- `frontend/package.json` — 版本 0.7.0 → 0.7.3
+- `backend/tests/test_websearch_extractor.py` — **新建** 5 个 corporate_events 单元测试
+- `backend/tests/test_spec_compliance.py` — +2 个 R4 合规测试
+- `CHANGELOG.md` — 本条目
+
+### Verified
+- ✅ 全量测试通过
+- ✅ Linter 零错误
+
+---
+
+## v0.7.2 (2026-06-21)
+
+### Fixed — dim7 供应商挤压 N/A 原因不透传
+
+- **`cash_quality.py`**: dim7 `no_supplier_squeeze_or_insufficient_data` 拆分为两种：
+  - `not_applicable_no_supplier_credit` — 净欠款连续为0（非制造业，如分众传媒），标记"不适用"
+  - `insufficient_data_for_cagr` — 数据不足无法计算
+- **`data_summarizer.py`**: dim7 新增 `reason` 字段透传给 QRV Agent，区分「不适用」vs「数据缺失」
+- **`turtle-coordinator.md`**: 新增 dim7 reason 码说明
+
+---
+
+## v0.7.1 (2026-06-21)
+
+### Fixed — 全链路8项同步修复 (v0.7.0 后补齐)
+
+**审计发现**: v0.7.0 CQ 8维度上线后，以下 8 项文档/代码未同步：
+
+#### P0 — 文档（版本号+维度数）
+- `CONTEXT.md` L58: 「CQ 5维度」→「CQ 8维度」
+- `CONTEXT.md` L64: 「现金质量5子维度」→「现金质量8子维度」
+- `turtle-coordinator.md` L337: 「CQ 5维度表」→「CQ 8维度表」
+
+#### P1 — 代码能力缺口
+- **A7 应付周转占位符修复** (`data_summarizer.py`): 现金转化周期从 `total_liab` 近似 → 改用真实 `accounts_payable + notes_payable` 计算应付周转天数
+- **A1 新增字段** (`data_summarizer.py`): yearly_data 新增 `accounts_payable_billion` / `notes_payable_billion` / `total_payables_billion`
+- **A4 dim7 透传逐年比率** (`data_summarizer.py`): dim7 块新增 `yearly_ratios` 字段(净欠款/成本逐年值)，QRV Agent 可据此做行业绝对值判断
+- **validate 字段缺失 WARNING** (`coordinator.py`): `_validate_raw_data()` 新增 v0.7.0 7 个可选字段缺失检测，记录 WARNING 提醒运维 `--full` 重拉
+- **fin_exp 负值钳底** (`penetration_return.py`): `fin_exp = max(0.0, fin_exp)` 防止利息净收入反哺 PR（现金奶牛型公司 PR 虚高）
+
+#### P2 — 行业阈值配置
+- **`industry_profiles.yaml`**: 每个行业新增 `cq_thresholds.supplier_debt_ratio_max` (IT=0.30, 医药=0.35, 食品饮料=0.35, 电力=0.40, 房地产=0.60, 银行=null, 默认=0.40)
+
+### Files Changed
+- `docs/CONTEXT.md` — 版本号 + 维度数修正
+- `backend/app/strategies/turtle/turtle-coordinator.md` — V1 维度数修正
+- `backend/app/services/data_summarizer.py` — A1 + A4 dim7 + A7 修复 (~+35行)
+- `backend/app/strategies/turtle/coordinator.py` — validate WARNING (~+15行)
+- `backend/app/strategies/turtle/penetration_return.py` — fin_exp clamp (+1行)
+- `backend/rules/v2/industry_profiles.yaml` — 6行业+默认 cq_thresholds
+- `backend/app/core/config.py` — 版本号 0.7.0 → 0.7.1
+- `backend/pyproject.toml` — 版本号 0.7.0 → 0.7.1
+- `CHANGELOG.md` — 本条目
+
+### Verified
+- ✅ 86/86 测试全部通过
+- ✅ Linter 零错误
+
+---
+
+## v0.7.0 (2026-06-21)
+
+### Added — 分红资金来源质量检测（CQ 8维度）
+
+**问题**: 原有 CQ 5维度只检测现金质量本身，未检测分红的现金从哪来。低负债率公司可能通过借钱发债或压上游货款来维持高分红，这种风险在原有的60%负债率门槛和5年聚合 PR 中被平滑掉。
+
+**方案（新增 CQ dim6-8 软门）**:
+
+| 维度 | 公式 | 门槛 | 检测什么 |
+|------|------|:--:|------|
+| 6 FCF分红覆盖率 | count(FCF ≥ dividend_paid_cf, 5y) | ≥4/5 | 借钱发债分红？ |
+| 7 供应商挤压 | (净供应商欠款/营业成本)CAGR − 营收CAGR | <10pp | 压上游货款撑现金流？ |
+| 8 有息负债趋势 | 有息负债率3年变化 | <10pp | 杠杆在攀升？ |
+
+**数据层（新拉8个资产负债表字段）**:
+- `accounts_payable` / `notes_payable` → 供应商欠款
+- `contract_liab` / `advance_receipts` → 区分健康预收款
+- `st_borrow` / `lt_borrow` / `bonds_payable` / `noncurrent_liab_due_in_1y` → 有息负债精确计算
+
+**规则第6条触发**: 新字段 → `--force` 全量重拉 → `--compute-only` 用新数据算
+
+**改动的文件（11个）**:
+- `tushare_client.py` — balancesheet fields +8
+- `data_fetcher.py` — 提取8个新字段
+- `cash_quality.py` — 新增 dim6/7/8 计算 + CAGR方向修复
+- `coordinator.py` — dim_fail_stats 扩展到8维
+- `data_summarizer.py` — A4/CQ 扩展到8维
+- `turtle_cash_quality.yaml` — dim6-8 规则定义
+- `turtle_coordinator.md` — Step 3/4 文档更新
+- `turtle_qrv.yaml` — V1 CQ 表格 5→8维
+- `test_cash_quality.py` — dim6-8 边界测试
+- `test_spec_compliance.py` — 8维度合规测试
+
+**效果（42候选池）**: CQ通过12/未通过30 → dim6(FCF分红覆盖)=25失败(最强信号), dim7(供应商挤压)=7失败, dim8(有息负债趋势)=0失败（说明Screener负债率<60%门槛已有效）
+
+---
+
+## v0.6.22 (2026-06-21)
+
+### Fixed — 分析中间状态被跳过（computing/websearch 不可见）
+
+**问题**: 点击分析后，前端只显示"正在拉取财务数据..."直接跳到"正在调用 LLM 分析..."，中间的 `computing`（计算 CQ+PR）和 `websearch`（搜索外部信息）阶段完全不可见。
+
+**根因**: 轮询间隔 2 秒，而 `computing`（<0.5s 纯 CPU 计算）和 `websearch`（7 天缓存命中 <0.1s）两个阶段合起来不到 1 秒，全部发生在两次轮询之间，轮询抓到的最新状态已是 `analyzing`。
+
+**修复（前端轮询加最小显示时长门控）**:
+1. 新增 `STAGE_ORDER` 阶段顺序定义：`fetching → computing → websearch → analyzing`
+2. 轮询检测到状态跨越 ≥2 级时（如 `fetching` → `analyzing` 跳过 `computing`+`websearch`），自动注入中间阶段
+3. 每阶段至少显示 `MIN_STAGE_MS=1500ms`，通过 `setTimeout` 链式推进
+4. 终态（done/error/timeout）立即显示，清除所有注入定时器
+5. 相邻阶段推进（维护 ≥2s 轮询间隔 ≥ MIN_STAGE_MS）直接显示，不注入
+6. 组件卸载时清理所有残留定时器
+
+### Files Changed
+- `frontend/src/components/ReportViewer.tsx` — 加 `scheduleStageChain` + 轮询阶段跳过检测
+- `CHANGELOG.md` — 本条目
+- `docs/CONTEXT.md` — 版本号 0.6.21 → 0.6.22
+- `backend/pyproject.toml` — 版本号 0.6.21 → 0.6.22
+- `backend/app/core/config.py` — APP_VERSION 0.6.21 → 0.6.22
+- `frontend/package.json` — 版本号 0.1.0 → 0.6.22
+
+### Verified
+- ✅ TypeScript 零编译错误
+- ✅ Linter 零错误
+
+---
+
+## v0.6.21 (2026-06-21)
+
+### Fixed — 重新分析按钮"一直显示提交中"Bug (UX)
+
+**问题**: 已生成报告的个股点击"重新分析"后，按钮一直显示"提交中..."，几分钟后直接跳到"提交LLM做分析"，中间拉数据/计算/搜索等阶段完全不显示。
+
+**根因**:
+1. `submittingRef` 锁的 `mutationFn` 提前 return 时仍触发 `onSuccess` → 产生假提交（前端以为任务已启动，但 POST 未发出）
+2. `onSuccess` 在 POST 完成后才设初始状态（`fetching`），而 POST 期间按钮只有 `isPending` 支配 → "提交中..."
+3. 按钮文字中 `isMutating` 优先级高于 `analysisStatus` → 即使进度数据已到，按钮仍显示"提交中..."
+
+**修复（三处联动）**:
+1. `submittingRef` 锁删除 + `onSuccess` → `onMutate`：初始状态在 mutationFn 执行前即设置，点击瞬间就看到"正在拉取财务数据..."
+2. 轮询加 `not_started` 保护：后端还没返回时，轮询返回 `not_started` 不会覆盖 `onMutate` 设置的乐观 `fetching` 状态
+3. 按钮文字优先级调换：`analysisStatus.message` > `isMutating`（两处按钮均修复）
+
+**防双击升级**: 两处按钮的 `disabled` 条件均新增 `isMutating`，替代已删除的 `submittingRef`。
+
+### Files Changed
+- `frontend/src/components/ReportViewer.tsx` — 删 `submittingRef` (+onMutate + 轮询保护 + 按钮文字优先级 + disabled)
+- `CHANGELOG.md` — 本条目
+- `docs/CONTEXT.md` — 版本号 0.6.20 → 0.6.21
+- `backend/pyproject.toml` — 版本号 0.6.20 → 0.6.21
+- `backend/app/core/config.py` — APP_VERSION 0.6.18 → 0.6.21
+
+### Verified
+- ✅ TypeScript 零编译错误
+- ✅ Linter 零错误
+
+---
+
+## v0.6.20 (2026-06-21)
+
+### Added — PR 硬排除：可支配现金均值 ≤ 0 不入股池
+
+**动机**: 川投能源、宁沪高速、赛轮轮胎、博源化工 4 只股票可支配现金5年均值为负（-49.71亿 ~ -5.39亿），但 PR=0 仍被放入股池排在末尾。这些公司过去5年根本没产生可供股东分配的现金流，分红靠举债或吃老本。
+
+**改动（四件套）**:
+
+① `coordinator.py` — 建池前硬排除:
+- `pool.append()` 前新增检查：`pr_result.disposable_cash_avg <= 0` → `continue`（不写入 computed.yaml 也不入池）
+- 新增计数器 `pr_excluded`，进度条、日志、StepResult 全部补上
+
+② `rules/v2/turtle_pr.yaml` — 新增 `hard_exclusion` 段:
+- 条件: `disposable_cash_avg <= 0`
+- 原因: 公司无法产生可供股东分配的现金流
+
+③ `turtle-coordinator.md` — Step 5 判定标准拆分:
+- 硬排除（不入股池）: 可支配现金均值 ≤ 0
+- 软门（标记不淘汰）: PR < 门槛 / CV ≥ 0.5 / 数据不足5年
+
+④ `tests/test_spec_compliance.py` — 新增 2 个测试:
+- `test_pr_excluded_disposable_cash_negative`: 单股负可支配现金 → 排除
+- `test_pr_excluded_single_vs_multiple`: 混合场景 → 只保留正的
+
+### Files Changed
+- `backend/app/strategies/turtle/coordinator.py` — +6行 (硬排除 + 计数器 + 进度)
+- `backend/rules/v2/turtle_pr.yaml` — +4行 (hard_exclusion)
+- `backend/app/strategies/turtle/turtle-coordinator.md` — 更新 Step 5
+- `backend/tests/test_spec_compliance.py` — +120行 (2个新测试)
+- `CHANGELOG.md` — 本条目
+- `docs/CONTEXT.md` — 版本号
+- `backend/pyproject.toml` — 版本号 0.6.19 → 0.6.20
+- `.codebuddy/memory/2026-06-21.md` — 每日日志
+
+### Verified
+- ✅ 64/64 测试全部通过 (含新增 2 个硬排除测试)
+
+---
+
+## v0.6.19 (2026-06-21)
+
+### Added — 分析按钮 6 态状态机 + 8 项防错机制 (UX 重大升级)
+
+**动机**: 分析按钮只有「🔍 分析个股」和「⏳ 分析中...」两种状态，用户完全不知道是在拉数据/跑AI/完成了/报错了。
+
+#### 六态按钮 (idle → submitting → processing → success → error → timeout)
+
+| 状态 | 文字 | 样式 | 可点击 |
+|------|------|------|--------|
+| 空闲 (无报告) | `🔍 分析个股` | 蓝色实心 | ✅ |
+| 空闲 (有报告) | `🔄 重新分析` | 蓝色边框+白底 | ✅ |
+| 提交中 | `◌ 提交中...` | 蓝色+旋转圈 | ❌ |
+| 处理中 | `◌ {阶段名}` | 蓝色+脉冲动画+进度条 | ❌ |
+| 完成 | `✅ 分析完成，加载报告中...` | 绿色实心 | ❌ |
+| 失败 | `⚠️ 分析失败，点击重试` | 红色边框+淡红底+错误框 | ✅ |
+| 超时 | `⚠️ 分析超时，点击重试` | 红色边框+淡红底 | ✅ |
+
+#### 8 项防错机制
+
+| # | 机制 | 防止什么 | 实现 |
+|---|------|---------|------|
+| ① | `useRef` 本地锁 + `pointer-events:none` | 快速双击、disabled 穿透 | `submittingRef` + 500ms 冷却 |
+| ② | Mount 时主动探活 `GET /analyze/status` | F5 刷新后状态丢失 | `useEffect([selectedStock])` 探活 |
+| ③ | 连续轮询失败 ≥5 → 警告 | 网络断连导致假死 | `consecutiveFailures` 计数器 |
+| ④ | 10 分钟超时检测 | 后台任务僵尸 | 15s 定时器检测 `startedAtMap` |
+| ⑤ | error/timeout → retry 先清再发 | 旧错误消息残留 | `onClick` 中 `delete analysisMap[code]` |
+| ⑥ | success 不按时间消失，等报告真实到位 | 闪完绿色但报告还没出 | done entry 仅在 `reportData` 到位时清理 |
+| ⑦ | POST 失败 vs Task 失败分开展示 | 用户知道重试还是检查后端 | `_errType: 'mutation' | 'task'` |
+| ⑧ | `visibilitychange` 回来即时刷新 | 切后台导致进度滞后 | 监听 + 主动 `GET /status` |
+
+#### CSS 新增动画
+
+- `@keyframes btnPulse` — 蓝色脉冲光晕 (processing 状态)
+- `@keyframes successFlash` — 绿色缩放弹入 (完成状态)
+- `@keyframes spin` — 按钮内旋转 spinner
+- `@keyframes btnPulse` — 蓝色脉冲 (processing)
+
+#### 样式新增类
+
+- `.analyzeBtnProcessing` — 脉冲蓝
+- `.analyzeBtnSuccess` — 绿色实心
+- `.analyzeBtnError` — 红色边框 (可点击重试)
+- `.analyzeBtnOutline` — 蓝色边框+白底 (有报告时的重新分析)
+- `.buttonSpinner` — 旋转加载圈
+- `.errorBox` — 红色错误详情框
+- `.successBox` — 绿色完成框
+- `.warningBox` — 黄色警告框
+- `.phaseLabel` — 进度阶段描述
+
+### Files Changed
+- `frontend/src/components/ReportViewer.tsx` — +120行 (状态机 + 8 项防错)
+- `frontend/src/components/ReportViewer.module.css` — +130行 (6 态样式 + 动画)
+- `CHANGELOG.md` — 本条目
+- `docs/CONTEXT.md` — 版本号
+- `backend/pyproject.toml` — 版本号 0.6.18 → 0.6.19
+
+### Verified
+- ✅ TypeScript 编译通过 (`tsc --noEmit`)
+- ✅ 后端 76/76 测试通过
+- ✅ Linter 零错误
+
+---
+
+- 所有交互按钮添加 `:active` 伪类：`transform: scale(0.88~0.97)` 微缩反馈
+- 覆盖范围：分析按钮、TOC 导航、引用返回、返回顶部、汉堡菜单、重试按钮（9 处）
+- `analyzeBtn`/`retryBtn` 额外 `:active:not(:disabled)` + `box-shadow` 收缩
+
+### Files Changed
+- `frontend/src/components/ReportViewer.module.css` — 7 处 `:active` (+15行)
+- `frontend/src/components/StockPool.module.css` — 2 处 `:active` (+5行)
+
+---
+
+## v0.6.17 (2026-06-21)
+
+### Fixed — 分析任务状态机两处内存泄漏
+
+1. **error 状态永不过期** (`stocks.py`):
+   - error 状态 5 分钟后自动从 `_analysis_tasks` 清除（此前只清理 done）
+
+2. **非终止状态卡死永久阻塞** (`stocks.py`):
+   - 任何状态超过 30 分钟自动标记为僵尸任务，允许重新提交
+   - 此前只有 done/error 放行，卡在 fetching/computing/websearch/analyzing 永久阻塞
+
+### Files Changed
+- `backend/app/api/stocks.py` — error 清理 + 30min 超时检测 (+13行)
+
+---
+
+## v0.6.16 (2026-06-21)
+
+### Changed — 个人使用整体调优 (Personal-Use Polish)
+
+**动机**: 审视个人使用阶段的问题，做 8 项不影响未来平台架构的优化。
+
+#### P0 — 三刀
+
+1. **结构性切除 LLM 开场白** (`ReportViewer.tsx`):
+   - 删除 `stripLlmRole()` (7 条打地鼠正则) + `stripHeaderTitle()`
+   - 新增 `stripPreamble()`: 找到第一个 `## ` 标题，之前内容全部丢弃
+   - 不再需要猜 LLM 会说什么废话，只要 prompt 要求 `## ` 开始正文即可
+   - 同时简化 header 渲染 + 移除 section 内的 `stripLlmRole` 调用
+
+2. **日志始终可读** (`logging.py`):
+   - `ConsoleRenderer` 不再仅 DEBUG 模式使用，始终输出人类可读格式
+   - 个人使用不需要 JSON 日志
+
+3. **Sidebar 版本号+日期动态化** (`Sidebar.tsx`):
+   - 版本号从 `GET /api/health` 动态获取 (替代硬编码 `v0.6.7`)
+   - 数据日期从 `GET /api/stocks/status` 动态获取 (替代硬编码 `2026-06-19`)
+
+#### P1 — 三便利
+
+4. **数据新鲜度端点** (`stocks.py`):
+   - 新增 `GET /api/status` 返回 `turtle_pool.json` 最后修改时间
+   - 缓存 TTL: 5min → 1h (个人用只有手动刷新才变)
+
+5. **砍 3 个未用前端依赖** (`package.json`):
+   - 移除 `react-router-dom`、`zustand`、`@tanstack/react-virtual`
+   - 全项目搜索零 import，加回只需一条 `npm install`
+
+6. **一键启动脚本** (`start.bat`):
+   - 双击启动 backend + frontend，打开浏览器即可
+
+#### P2 — 两增强
+
+7. **键盘快捷键** (`StockPool.tsx`):
+   - `↑↓` 浏览股池、`Enter` 选中、`Esc` 取消高亮
+
+8. **分析任务自动清理** (`stocks.py`):
+   - done 状态 5 分钟后自动从 `_analysis_tasks` 字典清除
+
+### Files Changed
+- `frontend/src/components/ReportViewer.tsx` — 结构性切除 preamble (~ −15行)
+- `frontend/src/components/Sidebar.tsx` — 版本号+日期动态化 (+20行)
+- `frontend/src/components/StockPool.tsx` — 键盘快捷键 (+25行)
+- `frontend/src/components/StockPool.module.css` — `.highlighted` 样式
+- `frontend/package.json` — −3 个未用依赖
+- `backend/app/core/logging.py` — ConsoleRenderer 始终可读
+- `backend/app/api/stocks.py` — +/status 端点 + 缓存 TTL + 自动清理
+- `backend/app/core/config.py` — 版本号 bump
+- `backend/pyproject.toml` — 版本号 0.6.15 → 0.6.16
+- `start.bat` — **新建** 一键启动脚本
+- `CHANGELOG.md` — 本条目
+- `docs/CONTEXT.md` — 版本号更新
+
+### Verified
+- ✅ 不影响 SQLAlchemy/structlog/apscheduler/akshare/Jinja2 等未来架构件
+- ✅ 后端测试通过
+
+---
+
 ## v0.6.15 (2026-06-19)
 
 ### Fixed — 生产就绪·止血 Top 8 (CRITICAL)

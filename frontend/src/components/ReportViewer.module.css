@@ -27,6 +27,11 @@
   box-shadow: none;
 }
 
+.analyzeBtn:active:not(:disabled) {
+  transform: scale(0.95);
+  box-shadow: 0 0px 0px rgba(49,103,243,0.35);
+}
+
 .analyzeBtn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -164,11 +169,16 @@
   color: var(--text-tertiary);
   cursor: pointer;
   font-family: inherit;
+  transition: all 0.15s;
 }
 
 .tocBtn:hover {
   border-color: var(--text-tertiary);
   color: var(--text-secondary);
+}
+
+.tocBtn:active {
+  transform: scale(0.92);
 }
 
 .tocNav {
@@ -203,6 +213,11 @@
   color: var(--text-primary);
 }
 
+.tocLink:active {
+  transform: scale(0.97);
+  background: var(--bg-elevated);
+}
+
 .tocLinkActive {
   background: var(--accent-faint);
   color: var(--accent-primary);
@@ -231,6 +246,10 @@
 .tocSubLink:hover {
   color: var(--text-secondary);
   background: var(--bg-elevated);
+}
+
+.tocSubLink:active {
+  transform: scale(0.97);
 }
 
 /* ---- Main ---- */
@@ -428,6 +447,10 @@
 }
 
 /* ---- Citation ---- */
+cite {
+  cursor: pointer;
+}
+
 .refCite {
   background: var(--accent-subtle);
   color: var(--accent-primary);
@@ -476,6 +499,10 @@
   border-color: var(--accent-primary);
 }
 
+.refBackBtn:active {
+  transform: scale(0.92);
+}
+
 /* ---- Back to Top ---- */
 .backTop {
   display: block;
@@ -494,6 +521,10 @@
 .backTop:hover {
   border-color: var(--text-tertiary);
   color: var(--text-secondary);
+}
+
+.backTop:active {
+  transform: scale(0.94);
 }
 
 .floatingBack {
@@ -521,6 +552,11 @@
   pointer-events: auto;
 }
 
+.floatingBack:active {
+  transform: scale(0.93);
+  box-shadow: 0 1px 3px rgba(49,103,243,0.3);
+}
+
 /* ---- 跳转高亮动画 ---- */
 .sectionHighlight {
   animation: sectionFlash 2s ease-out;
@@ -542,4 +578,162 @@
 .link:hover {
   color: var(--accent-hover);
   border-bottom-style: solid;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Analyze Button — 6-State State Machine
+   v0.6.19: processing / success / error / outline variants
+   ═══════════════════════════════════════════════════════ */
+
+/* Guard ①: hard-cut click prevention */
+.analyzeBtn:disabled,
+.analyzeBtnProcessing,
+.analyzeBtnSuccess {
+  pointer-events: none;
+}
+
+/* ---- Processing (blue + pulsating) ---- */
+.analyzeBtnProcessing {
+  background: var(--accent-primary);
+  color: #fff;
+  animation: btnPulse 1.6s ease-in-out infinite;
+  cursor: not-allowed;
+}
+
+@keyframes btnPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(49,103,243,0.45); }
+  50%      { box-shadow: 0 0 0 8px rgba(49,103,243,0); }
+}
+
+/* ---- Success (green) ---- */
+.analyzeBtnSuccess {
+  background: var(--positive);
+  color: #fff;
+  border-color: var(--positive);
+  box-shadow: 0 0 0 3px rgba(48,180,120,0.25);
+  cursor: default;
+  animation: successFlash 0.4s ease-out;
+}
+
+@keyframes successFlash {
+  0%   { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+/* ---- Error (red, clickable) ---- */
+.analyzeBtnError {
+  background: rgba(239,52,99,0.08);
+  color: var(--negative);
+  border: 1.5px solid var(--negative);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.analyzeBtnError:hover {
+  background: rgba(239,52,99,0.14);
+  box-shadow: none;
+}
+
+/* ---- Outline (border-only, for re-analyze when report exists) ---- */
+.analyzeBtnOutline {
+  background: transparent;
+  color: var(--accent-primary);
+  border: 1.5px solid var(--accent-primary);
+  box-shadow: none;
+}
+
+.analyzeBtnOutline:hover {
+  background: var(--accent-faint);
+  box-shadow: none;
+}
+
+/* ---- Button Spinner ---- */
+.buttonSpinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 4px;
+}
+
+.analyzeBtnOutline .buttonSpinner {
+  border-color: rgba(49,103,243,0.2);
+  border-top-color: var(--accent-primary);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Error Box ---- */
+.errorBox {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: rgba(239,52,99,0.06);
+  border: 1px solid rgba(239,52,99,0.2);
+  border-radius: var(--radius);
+  font-size: var(--font-sm);
+  color: var(--negative);
+  max-width: 360px;
+  text-align: left;
+  line-height: 1.5;
+}
+
+.errorBox strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+/* ---- Success Box (Guard ⑥: loading after done) ---- */
+.successBox {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: rgba(48,180,120,0.06);
+  border: 1px solid rgba(48,180,120,0.25);
+  border-radius: var(--radius);
+  font-size: var(--font-sm);
+  color: var(--positive);
+  max-width: 360px;
+  text-align: center;
+}
+
+/* ---- Warning Box (Guard ③: network / Guard ④: timeout) ---- */
+.warningBox {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: rgba(245,158,11,0.06);
+  border: 1px solid rgba(245,158,11,0.25);
+  border-radius: var(--radius);
+  font-size: var(--font-sm);
+  color: #b45309;
+  max-width: 360px;
+  text-align: left;
+  line-height: 1.5;
+}
+
+/* ---- Phase Label ---- */
+.phaseLabel {
+  font-size: var(--font-xs);
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  text-align: center;
+}
+
+/* ---- Trend Colors (盈利质量趋势着色) ---- */
+.trendUp {
+  color: var(--positive);
+  font-weight: 600;
+}
+
+.trendDown {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.trendStable {
+  color: var(--text-tertiary);
+  font-weight: 500;
 }

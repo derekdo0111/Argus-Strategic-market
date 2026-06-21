@@ -1,5 +1,7 @@
 """Data Summarizer — QRV 预处理引擎
 
+v2.2.0: reference_index W条目注入置信度(module_confidence + snippet_confidence) + confidence_summary 汇总
+v2.1.0: reference_index 新增 A 系列数据锚点 (A1-A8)，供 LLM 在报告参考来源中引用原始数值
 v2.0.0: A1 从 9 字段扩展到 20+ 字段，新增 Layer3 数据充分性评估，
          新增 A7 生意属性硬算 (收款方式/轻资产/现金转化周期)，
          支持按行业动态加载指标 profile (P2)
@@ -23,6 +25,12 @@ _INDUSTRY_PROFILES_PATH = settings.RULES_DIR / "v2" / "industry_profiles.yaml"
 class DataSummarizer:
     """QRV 数据预处理器
 
+    v2.2.0 升级:
+    - reference_index W条目新增 module_confidence + snippet_confidence + confidence_summary 汇总
+
+    v2.1.0 升级:
+    - reference_index 新增 A1-A8 数据锚点，LLM 可在参考来源中引用原始数值
+
     v2.0.0 升级:
     - A1 扩展至 20+ 字段 (EPS/FCF/CAPEX/商誉/固定资产比/应收周转/存货周转/在建比等)
     - 新增 A7 生意属性 (轻/重资产, 收款方式, 现金转化周期)
@@ -30,7 +38,7 @@ class DataSummarizer:
     - 按行业动态加载指标 profile (银行不关心产能, 制造业不关心不良率)
 
     输入：raw_data.yaml + computed.yaml + websearch.yaml
-    输出：结构化摘要块 (A1-A7) + data_sufficiency
+    输出：结构化摘要块 (A1-A8) + data_sufficiency + reference_index
     """
 
     def __init__(self, raw_data: Optional[dict] = None,
@@ -73,7 +81,7 @@ class DataSummarizer:
         }
         # v2.0.0: Layer 3 数据充分性评估
         summary["data_sufficiency"] = self._assess_data_sufficiency(summary)
-        # v3.1.0: URL 证据链索引 (供报告末尾「参考来源」章节)
+        # v0.7.5: URL 证据链索引 + A 系列数据锚点 + 置信度(供报告末尾「参考来源」章节)
         summary["reference_index"] = self._build_reference_index()
         return summary
 
@@ -198,6 +206,9 @@ class DataSummarizer:
             intangibles = self._sf(bs.get("intangible_assets"))
             cur_ratio = self._sf(bs.get("current_ratio"))
             quick_ratio = self._sf(bs.get("quick_ratio"))
+            # v0.7.1: 供应商欠款字段 (dim7供应商挤压 + A7应付周转)
+            accounts_payable = self._sf(bs.get("accounts_payable"))
+            notes_payable = self._sf(bs.get("notes_payable"))
 
             # ── 派生指标 ──
             ocf_np = round(ocf / net_profit, 3) if net_profit and ocf else None
@@ -259,6 +270,10 @@ class DataSummarizer:
                 "fixed_asset_ratio_pct": fixed_ratio,
                 "intangible_assets_billion": round(intangibles, 2) if intangibles else None,
                 "capex_to_depreciation": capex_depr,
+                # v0.7.1: 供应商欠款 + 应付周转 + 现金转化周期
+                "accounts_payable_billion": round(accounts_payable, 2) if accounts_payable else None,
+                "notes_payable_billion": round(notes_payable, 2) if notes_payable else None,
+                "total_payables_billion": round(accounts_payable + notes_payable, 2) if (accounts_payable or notes_payable) else None,
             })
 
         trends = self._calc_trends(rows)
@@ -367,7 +382,7 @@ class DataSummarizer:
         }
 
     def _a4_cq_gate(self) -> dict:
-        """A4: CQ 门 5 维度判定明细"""
+        """A4: CQ 门 8 维度判定明细 (v0.7.0)"""
         cq = self.computed.get("cash_quality", {})
         if not cq:
             return {"status": "no_data", "message": "computed.cash_quality 为空"}
@@ -401,6 +416,31 @@ class DataSummarizer:
                 "label": "经营CF CV(5年)", "threshold": "< 0.5",
                 "passed": cq.get("dimension_5_ocf_stability", {}).get("passed"),
                 "cv": round(cq.get("dimension_5_ocf_stability", {}).get("cv", 0), 3),
+            },
+            # v0.7.0: 新增 dim6-8 分红资金来源质量
+            "dimension_6_fcf_dividend_coverage": {
+                "label": "FCF分红覆盖率(5年)", "threshold": ">= 4",
+                "passed": cq.get("dimension_6_fcf_dividend_coverage", {}).get("passed"),
+                "positive_years": cq.get("dimension_6_fcf_dividend_coverage", {}).get("positive_years"),
+                "valid_years": cq.get("dimension_6_fcf_dividend_coverage", {}).get("valid_years"),
+            },
+            "dimension_7_supplier_squeeze": {
+                "label": "供应商挤压(净欠款/成本CAGR)", "threshold": "< 10pp",
+                "passed": cq.get("dimension_7_supplier_squeeze", {}).get("passed"),
+                "supplier_ratio_cagr": cq.get("dimension_7_supplier_squeeze", {}).get("supplier_ratio_cagr"),
+                "revenue_cagr": cq.get("dimension_7_supplier_squeeze", {}).get("revenue_cagr"),
+                "squeeze_gap": cq.get("dimension_7_supplier_squeeze", {}).get("squeeze_gap"),
+                # v0.7.1: 透传逐年净欠款/成本比率, QRV Agent 可据此做行业绝对值判断
+                "yearly_ratios": cq.get("dimension_7_supplier_squeeze", {}).get("ratios"),
+                # v0.7.2: 透传reason, 区分「无供应商信用(轻资产/非制造业)」vs「数据不足」
+                "reason": cq.get("dimension_7_supplier_squeeze", {}).get("reason"),
+            },
+            "dimension_8_interest_bearing_debt_trend": {
+                "label": "有息负债率3年变化", "threshold": "< 10pp",
+                "passed": cq.get("dimension_8_interest_bearing_debt_trend", {}).get("passed"),
+                "latest_ratio": cq.get("dimension_8_interest_bearing_debt_trend", {}).get("latest_ratio"),
+                "three_y_ago_ratio": cq.get("dimension_8_interest_bearing_debt_trend", {}).get("three_y_ago_ratio"),
+                "change": cq.get("dimension_8_interest_bearing_debt_trend", {}).get("change"),
             },
         }
 
@@ -556,9 +596,16 @@ class DataSummarizer:
             "unknown": "数据不足",
         }.get(capex_mode, "")
 
-        # 现金转化周期 (应收账款周转 + 存货周转 - 应付周转)
-        # 应付周转用 total_liab 近似 (实际需要应付账款, 但 schema 无)
-        total_assets = latest.get("total_assets_billion")
+        # v0.7.1: 现金转化周期 (应收周转 + 存货周转 - 应付周转)
+        # 应付账款 = accounts_payable + notes_payable (v0.7.0已拉取)
+        total_payables = latest.get("total_payables_billion") or 0
+        operate_cost = latest.get("operate_cost_billion") or 0
+        payables_turnover_days = None
+        if total_payables > 0 and operate_cost > 0:
+            payables_turnover_days = round(total_payables / operate_cost * 365, 0)
+        cash_conversion_days = None
+        if recv_days is not None and inv_days is not None and payables_turnover_days is not None:
+            cash_conversion_days = round(recv_days + inv_days - payables_turnover_days, 0)
 
         return {
             "payment_method": {
@@ -581,6 +628,16 @@ class DataSummarizer:
                 "capex_to_depreciation": latest.get("capex_to_depreciation"),
                 "narrative": capex_narrative,
                 "quant_level": "semi_quantitative",
+            },
+            # v0.7.1: 现金转化周期 (应收周转 + 存货周转 - 应付周转)
+            "cash_conversion_cycle": {
+                "receivables_turnover_days": recv_days,
+                "inventory_turnover_days": inv_days,
+                "payables_turnover_days": payables_turnover_days,
+                "cash_conversion_days": cash_conversion_days,
+                "total_payables_billion": total_payables,
+                "narrative": f"应收{recv_days}天 + 存货{inv_days}天 − 应付{payables_turnover_days}天 = 现金转化{cash_conversion_days}天" if cash_conversion_days is not None else "应付周转数据不足, 现金转化周期无法计算",
+                "quant_level": "quantitative" if cash_conversion_days is not None else "partial",
             },
             "data_source": "A1_core_financials (derived metrics)",
         }
@@ -701,9 +758,12 @@ class DataSummarizer:
             "R3_structure": self._rate_websearch("r3_websearch", threshold=1,
                 note="控股结构依赖websearch"),
 
+            "R4_corporate_events": self._rate_websearch("q_websearch", threshold=1,
+                note="重大事件依赖q_websearch定增/并购关键词, 正则提取corporate_events, 提取到事件即有数据"),
+
             "V1_value_trap": {
                 "level": "rich",
-                "note": "A4提供CQ 5维度完整判定数据, A1提供资产负债数据"
+                "note": "A4提供CQ 8维度完整判定数据, A1提供资产负债数据"
             },
             "V2_valuation": self._rate_valuation(summary),
             "V3_stress_test": self._rate_dim(
@@ -778,17 +838,27 @@ class DataSummarizer:
     # ──────────────────────────────────────────────
 
     def _build_reference_index(self) -> dict:
-        """从 websearch 中提取所有 snippet 的 URL 索引。
+        """从 websearch 中提取所有 snippet 的 URL 索引，并附加 A 系列数据锚点。
+
+        v0.7.5: W条目新增 module_confidence / snippet_confidence + confidence_summary 汇总
 
         输出格式:
         {
-          "W-q-1": {"url": "https://...", "title": "...", "source": "q_websearch"},
+          "W-q-1": {"url": "https://...", "title": "...", "source": "q_websearch",
+                     "module_confidence": "HIGH", "snippet_confidence": "MEDIUM"},
           "W-r1-3": {...},
+          ...,
+          "confidence_summary": {"q_websearch": "HIGH", "r1_websearch": "MEDIUM", ...,
+                                  "overall": "HIGH"},
+          "A1": {"description": "...", "revenue_billion": ..., ...},
+          "A2": {...},
           ...
         }
-        LLM 在报告中使用 [W-q-3] 标记时，读者可通过此索引找到对应 URL。
+        LLM 在报告中使用 [W-q-3] / [A4] 标记时，读者可通过此索引找到对应 URL 或数据来源。
         """
         index = {}
+
+        # ── W 系列: websearch URL 索引 + 置信度 (v0.7.5: 注入模块级+片段级置信度) ──
         ws_keys = ["q_websearch", "r1_websearch", "r2_websearch", "r3_websearch", "v_websearch"]
         prefix_map = {
             "q_websearch": "W-q",
@@ -797,17 +867,137 @@ class DataSummarizer:
             "r3_websearch": "W-r3",
             "v_websearch": "W-v",
         }
+        # 收集各模块置信度用于 confidence_summary
+        ws_confidence = {}
         for key in ws_keys:
             ws = self.websearch.get(key, {})
             snippets = ws.get("snippets", [])
             prefix = prefix_map.get(key, key)
+            # 模块级置信度 (来自 coordinator 的 _tavily_search)
+            module_conf = ws.get("confidence", "NONE")
+            ws_confidence[key] = module_conf
             for i, s in enumerate(snippets):
                 ref_id = f"{prefix}-{i + 1}"
                 index[ref_id] = {
                     "url": s.get("url", ""),
                     "title": s.get("title", ""),
                     "source": key,
+                    "module_confidence": module_conf,
+                    "snippet_confidence": s.get("confidence", ""),
                 }
+
+        # ── confidence_summary: 汇总5模块置信度 (v0.7.5) ──
+        high_count = sum(1 for v in ws_confidence.values() if v == "HIGH")
+        medium_count = sum(1 for v in ws_confidence.values() if v == "MEDIUM")
+        if high_count >= 3:
+            overall = "HIGH"
+        elif high_count + medium_count >= 3:
+            overall = "MEDIUM"
+        elif any(v in ("HIGH", "MEDIUM", "LOW") for v in ws_confidence.values()):
+            overall = "LOW"
+        else:
+            overall = "NONE"
+        index["confidence_summary"] = {
+            **ws_confidence,
+            "overall": overall,
+        }
+
+        # ── A 系列: Data Summarizer 数据来源锚点 (v0.7.4) ──
+        a1 = self._a1_core_financials()
+        a3 = self._a3_dividend_repurchase()
+        a4 = self._a4_cq_gate()
+        a5 = self._a5_pr_detail()
+        a6 = self._a6_valuation_snapshot()
+        a7 = self._a7_business_profile()
+        a8 = self._a8_valuation_percentile()
+
+        # A1 核心财务指标 — 提取最新年度关键数值
+        a1_rows = a1.get("yearly_data", [])
+        if a1_rows:
+            latest_year = a1_rows[-1]
+            index["A1"] = {
+                "description": "核心财务指标5年趋势",
+                "latest_year": latest_year.get("year"),
+                "revenue_billion": latest_year.get("revenue_billion"),
+                "net_profit_billion": latest_year.get("net_profit_billion"),
+                "roe_pct": latest_year.get("roe_pct"),
+                "gross_margin_pct": latest_year.get("gross_margin_pct"),
+                "eps": latest_year.get("eps"),
+                "fcf_to_netprofit": latest_year.get("fcf_to_netprofit"),
+            }
+        else:
+            index["A1"] = {"description": "核心财务指标5年趋势", "status": "no_data"}
+
+        # A2 收入结构线索
+        a2 = self._a2_revenue_structure()
+        index["A2"] = {
+            "description": "业务收入结构线索",
+            "snippets_count": len(a2.get("snippets_with_revenue_data", [])),
+            "note": "从websearch提取, 具体见Q1.2表",
+        }
+
+        # A3 分红回购5年统计
+        index["A3"] = {
+            "description": "分红回购5年统计",
+            "total_dividend_5y_billion": a3.get("total_dividend_5y_billion"),
+            "total_repurchase_billion": a3.get("total_repurchase_billion"),
+            "dividend_years": a3.get("dividend_years"),
+        }
+
+        # A4 CQ门8维度判定
+        a4_failed = a4.get("failed_dimensions", []) or []
+        a4_dim_count = sum(1 for k in a4 if k.startswith("dimension_"))
+        index["A4"] = {
+            "description": "CQ门8维度判定",
+            "overall_passed": a4.get("overall_passed"),
+            "passed_count": a4_dim_count - len(a4_failed),
+            "failed_dimensions": a4_failed,
+        }
+
+        # A5 PR穿透回报率
+        index["A5"] = {
+            "description": "PR穿透回报率",
+            "pr_pct": a5.get("pr_pct"),
+            "threshold_pct": a5.get("threshold_pct"),
+            "risk_free_rate_pct": a5.get("risk_free_rate_pct"),
+            "passed": a5.get("passed"),
+        }
+
+        # A6 估值快照
+        index["A6"] = {
+            "description": "估值快照",
+            "pe": a6.get("pe"),
+            "pb": a6.get("pb"),
+            "dividend_yield_pct": a6.get("dividend_yield_pct"),
+            "total_mv_billion": a6.get("total_mv_billion"),
+        }
+
+        # A7 生意属性
+        pm = a7.get("payment_method", {})
+        bn = a7.get("business_nature", {})
+        index["A7"] = {
+            "description": "生意属性",
+            "receivables_turnover_days": pm.get("receivables_turnover_days"),
+            "fixed_asset_ratio_pct": bn.get("fixed_asset_ratio_pct"),
+            "inventory_turnover_days": bn.get("inventory_turnover_days"),
+            "gross_margin_pct": bn.get("gross_margin_pct"),
+            "payment_type": pm.get("type"),
+        }
+
+        # A8 历史分位
+        if a8.get("status") != "no_data":
+            a8_pe = a8.get("pe", {})
+            index["A8"] = {
+                "description": "历史分位",
+                "pe_current": round(a8_pe.get("current", 0), 2) if a8_pe.get("current") else None,
+                "pe_p25": a8_pe.get("p25"),
+                "pe_median": a8_pe.get("median"),
+                "pe_p75": a8_pe.get("p75"),
+                "pe_current_percentile": a8_pe.get("current_percentile"),
+            }
+        else:
+            index["A8"] = {"description": "历史分位", "status": "no_data"}
+
         return index
 
     @staticmethod

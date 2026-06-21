@@ -655,6 +655,15 @@ class DataFetcher:
                             field_name="balance.total_cur_assets"),
                         "total_cur_liab": self._safe_float(row.get("total_cur_liab"),
                             field_name="balance.total_cur_liab"),
+                        # v0.7.0: 分红资金来源质量检测所需字段
+                        "accounts_payable": self._safe_float(row.get("accounts_payable")),      # 应付账款
+                        "notes_payable": self._safe_float(row.get("notes_payable")),            # 应付票据
+                        "contract_liab": self._safe_float(row.get("contract_liab")),            # 合同负债
+                        "advance_receipts": self._safe_float(row.get("advance_receipts")),       # 预收款项
+                        "st_borrow": self._safe_float(row.get("st_borrow")),                    # 短期借款
+                        "lt_borrow": self._safe_float(row.get("lt_borrow")),                    # 长期借款
+                        "bonds_payable": self._safe_float(row.get("bonds_payable")),            # 应付债券
+                        "noncurrent_liab_due_in_1y": self._safe_float(row.get("noncurrent_liab_due_in_1y")),  # 一年内到期非流动负债
                     }
                     # 流动/速动比率
                     if not fina.empty:

@@ -32,12 +32,103 @@
 - 每次改完代码后跑 `pytest tests\ -v` + `cd frontend && npm test` 确认无回归
 - 现有后端 76 测试 + 前端 13 测试 全部通过 (v2026-06-19)
 
-## 版本号 (v0.6.15 / 2026-06-19)
-- 全局版本: `pyproject.toml`, `main.py`, `config.py`, `CONTEXT.md` — 统一为 `0.6.15`
+## 版本号 (v0.7.7 / 2026-06-22)
+- 全局版本: `pyproject.toml`, `main.py`, `config.py`, `CONTEXT.md` — 统一为 `0.7.7`
 - 规则版本: 当前使用 **v2**（`rules/v2/` 目录），代码默认值统一为 `"v2"`
-- `CHANGELOG.md` 从 v0.1.0 开始记录, 当前最新 v0.6.15
-- `rules/v2/` 包含 turtle_pr / turtle_cash_quality / turtle_screener / turtle_qrv 四份规则
+- `CHANGELOG.md` 从 v0.1.0 开始记录, 当前最新 v0.7.7
+- `rules/v2/` 包含 turtle_pr / turtle_cash_quality / turtle_screener / turtle_qrv / industry_profiles 五份规则
 - `.env.example` 已脱敏 (2026-06-17)，v0.6.15 补全 TAVILY_API_KEY/CORS_ORIGINS/DEBUG 等 5 项
+
+## v0.7.7 三项前端修复 + 股池分数实时更新 (2026-06-22)
+- **问题1 引用跳转失效**: a组件丢弃id属性 → `mdComponents.a` 转发 `{...rest}`；参考来源默认折叠无锚点 → `isDefaultExpanded` 加正则；cite无点击暗示 → CSS全局 `cursor:pointer`
+- **问题2 盈利质量趋势无色**: TdRenderer 新增 `TREND_MAP` 识别 up/down/stable/吃老本/收缩 → up绿▲/down红▼/stable灰─
+- **问题3 股池QRV分数不更新**: `_run_analysis_background` done时读取 `qrv_analysis.json` → 回填 `scores` 到 `_pool_cache`
+- **涉及文件**: ReportViewer.tsx, ReportViewer.module.css, stocks.py, CHANGELOG.md, CONTEXT.md, pyproject.toml
+- **测试**: Lint零错误 ✅
+
+## v0.7.6 WebSearch 置信度质量加权 + 前端锚点/TOC 修复 (2026-06-22)
+- **问题**: 置信度全是 HIGH（≥6条即HIGH,每模块12+条）；引用 `[W-q-1](#w-q-1)` 裸文本不跳转；TOC子标题跳错；锚点id被sanitize剥离
+- **质量加权**: coordinator.py 新增 3 个确定性打分函数 (来源可信度/信息密度/时效性, 0-3分/条)，模块置信度按质量总分判定 (≥12→HIGH, ≥6→MEDIUM, ≥2→LOW)
+- **前端修复**: 正则加 `(?!\()` 负向前瞻；`rehype-sanitize` schema 允许 `a[id]`/`a[name]`；TOC子项 `item.id`→`sub.id`；`scrollToSection` 支持 h3 查找
+- **测试**: 98/98 全绿 ✅ | tsc零错误 ✅ | Linter零错误 ✅
+
+## v0.7.5 锚点跳转 + 置信度使用规则 (2026-06-21)
+- **问题**: 报告引用标记 `[W-q-3]` 是纯文本无法点击跳转；websearch 有置信度数据但 Prompt 未要求使用
+- **锚点跳转**: 正文引用格式从 `[W-q-3]` → `[W-q-3](#w-q-3)` + 参考来源行前放 `<a id="w-q-3"></a>`，A系列同理
+- **置信度规则**: turtle_qrv.yaml 新增全节，定义 HIGH/MEDIUM/LOW/NONE 四级 + 对应引用规则 + 降权要求
+- **数据层**: data_summarizer.py v2.1→v2.2: W条目新增 module_confidence/snippet_confidence + confidence_summary 汇总
+- **涉及文件**: turtle_qrv.yaml, data_summarizer.py, turtle-coordinator.md, CONTEXT.md, config.py, pyproject.toml, package.json, CHANGELOG.md
+- **测试**: 98/98 全部通过，零计算逻辑变更
+
+## v0.7.4 报告输出质量四件套 (2026-06-21)
+- **问题**: 报告段落不稳定/超链接无URL/趋势英文词/估值区间LLM凭感觉估
+- **结构强制**: Prompt 新增强制输出结构声明，7个顶级 ## 标题固定顺序和名称
+- **参考来源**: data_summarizer reference_index +A1-A8 数据锚点，LLM可提取原始数值填入 A-引用表
+- **趋势箭头**: up/down/stable → ↑/↓/→
+- **估值公式约束**: 低估PE=min(当前PE×0.7, A8.p25)，合理PE=A8.median，高估PE=max(当前PE×1.3, A8.p75)
+- **测试**: 98/98 全部通过
+
+## v0.7.3 R4 重大事件与资本运作 (2026-06-21)
+- **问题**: 分众传媒3月定增收购新潮传媒(83.5亿)这样的大事三层全漏
+- **搜索层**: q_websearch +1 keyword "定增 并购 收购 资产重组 资本运作 重大合同 重大事项"
+- **提取层**: WebSearchExtractor +`_extract_corporate_events()` (定增/并购/重组/重大合同/诉讼 5类正则)
+- **分析层**: QRV v3→v4, 10模块→11模块, +R4事件清单表+影响分析+跨维度联动
+- **涉及文件**: turtle_qrv.yaml, websearch_extractor.py, data_summarizer.py, turtle-coordinator.md, CONTEXT.md, config.py, pyproject.toml, package.json, test_websearch_extractor.py(新), test_spec_compliance.py, CHANGELOG.md
+- **测试**: 98/98 全部通过 (原86 + 新增12)
+
+## v0.7.2 dim7 reason 透传修复 (2026-06-21)
+- **问题**: 分众传媒 dim7 供应商挤压显示 N/A，reason 字段未透传到 data_summarizer
+- **`cash_quality.py`**: `no_supplier_squeeze_or_insufficient_data` 拆为 `not_applicable_no_supplier_credit`(无实物供应商) + `insufficient_data_for_cagr`(数据不足)
+- **`data_summarizer.py`**: dim7 新增 `reason` 字段，QRV Agent 可区分「不适用」vs「数据缺失」
+- **`turtle-coordinator.md`**: 新增 dim7 reason 码说明
+- **测试**: 86/86 全部通过
+
+## v0.7.0 分红资金来源质量检测 (2026-06-21)
+- **动机**: CQ 5维度检测现金质量但不检测分红现金来源。低负债率公司可借钱发债或压上游货款维持高分红
+- **新增 CQ dim6/7/8**: FCF分红覆盖率(dim6)、供应商挤压(dim7)、有息负债趋势(dim8) — 全部软门
+- **数据层**: tushare_client.py 新增 8 个资产负债表字段 (accounts_payable/notes_payable/contract_liab/advance_receipts/st_borrow/lt_borrow/bonds_payable/noncurrent_liab_due_in_1y)
+- **效果**: 42候选池 CQ通过12/未通过30，dim6(FCF分红覆盖)=25失败(最强信号)
+- **改动的文件(11个)**: tushare_client.py, data_fetcher.py, cash_quality.py, coordinator.py, data_summarizer.py, turtle_cash_quality.yaml, turtle_coordinator.md, turtle_qrv.yaml, test_cash_quality.py, test_spec_compliance.py, CHANGELOG.md
+- **测试**: 16/16 全部通过 (12 unit + 4 SPEC), pytest 全量绿 ✅
+- **CAGR 方向 Bug 修复**: dim7 CAGR 计算方向反了 (ratios[-1]/ratios[0] → ratios[0]/ratios[-1]), 测试捕获并修复
+
+## v0.6.22 分析中间状态跳过修复 (2026-06-21)
+- **问题**: 分析时前端状态从 `fetching` 直接跳到 `analyzing`，中间 `computing`（计算CQ+PR）和 `websearch`（外部搜索）不可见
+- **根因**: 轮询间隔 2s，computing（<0.5s）+ websearch缓存（<0.1s）合不到 1s，全部发生在两次轮询之间
+- **修复**: 前端加最小显示时长门控 — `STAGE_ORDER` 定义阶段顺序，检测状态跨越 ≥2 级时注入中间阶段
+- **机制**: `scheduleStageChain()` 按 MIN_STAGE_MS=1500ms 间隔逐个显示跳过阶段；终态立即显示；相邻推进直接显示
+- **涉及文件**: ReportViewer.tsx (+70行), CHANGELOG.md, CONTEXT.md, pyproject.toml, config.py, package.json
+- **测试**: 后端 78/78 全绿 ✅ | tsc --noEmit 零错误 ✅
+
+## v0.6.19 分析按钮 6 态状态机 + 8 项防错机制 (2026-06-21)
+- **动机**: 分析按钮只有 2 态 (idle/analyzing)，用户不知道在拉数据/跑AI/完成了/报错了
+- **6 态**: idle → submitting(提交中...) → processing(阶段名+脉冲+进度条) → success(✅绿色+加载中) → error(⚠️红色+重试) → timeout(⚠️超时+重试)
+- **按钮样式**: processing 蓝色脉冲动画、success 绿色缩放弹入、error 红色边框可点击重试、outline 蓝色边框(有报告时的重新分析)
+- **① 本地锁**: `submittingRef` + 500ms 冷却防双击竞态
+- **② 探活恢复**: mount 时 GET `/analyze/status` 恢复 F5 刷新后状态
+- **③ 断连警告**: 连续 5 次轮询失败 → 黄色警告框
+- **④ 超时检测**: 15s 定时器 + `startedAtMap` ref 检测 10min 僵尸任务
+- **⑤ 重试清错误**: retry 前 `delete analysisMap[code]` 清旧错误
+- **⑥ 成功等报告**: done entry 仅在 reportData 到位时清理（不按时消失）
+- **⑦ 区分错误**: `_errType: 'mutation'|'task'` 区分 POST 失败 vs 后台任务失败
+- **⑧ 切后台恢复**: `visibilitychange` 监听 + 主动 GET status
+- **新增 CSS 类**: `.analyzeBtnProcessing`/`.analyzeBtnSuccess`/`.analyzeBtnError`/`.analyzeBtnOutline`/`.buttonSpinner`/`.errorBox`/`.successBox`/`.warningBox`/`.phaseLabel`
+- **动画**: `@keyframes btnPulse`(蓝脉冲)、`@keyframes successFlash`(绿弹入)、`@keyframes spin`(旋转)
+- **涉及文件**: ReportViewer.tsx(+120行), ReportViewer.module.css(+130行), CHANGELOG.md, CONTEXT.md, MEMORY.md, pyproject.toml
+- **测试**: 后端 76/76 全绿 ✅ | tsc --noEmit 零错误 ✅ | vite build 通过 ✅
+
+## v0.6.16 个人使用整体调优 (2026-06-21)
+- **动机**: 审视个人使用阶段问题，做 8 项不影响未来平台架构的优化
+- **P0-LLM开场白**: `stripPreamble()` 结构性切除（找第一个 `## ` 标题，之前全部丢弃），替代 `stripLlmRole` 的 7 条打地鼠正则
+- **P0-日志可读**: `logging.py` ConsoleRenderer 始终使用（不再仅 DEBUG），个人使用不需 JSON
+- **P0-版本号动态化**: Sidebar 从 `/api/health` 获取版本号 + `/api/stocks/status` 获取数据日期
+- **P1-新鲜度端点**: `GET /api/status` 返回 turtle_pool.json mtime；缓存 TTL 5min→1h
+- **P1-砍未用依赖**: 移除 react-router-dom/zustand/@tanstack/react-virtual (全项目零 import)
+- **P1-一键启动**: `start.bat` 双击启动 frontend+backend
+- **P2-键盘快捷键**: StockPool `↑↓` 浏览、`Enter` 选中、`Esc` 取消
+- **P2-任务清理**: done 状态 5min 后自动从 `_analysis_tasks` 清除
+- **测试**: 76/76 后端全绿 ✅ | tsc --noEmit 零错误 ✅ | vite build 通过 ✅
+- **架构保留**: SQLAlchemy/alembic/structlog/apscheduler/akshare/Jinja2 全部未动
 
 ## v0.6.13 Playwright E2E 测试基础设施 (2026-06-19)
 - **测试框架**: Playwright @playwright/test v1.61, Chromium headless

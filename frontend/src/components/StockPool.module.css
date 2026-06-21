@@ -45,6 +45,11 @@
   color: var(--text-primary);
 }
 
+.hamburger:active {
+  transform: scale(0.88);
+  background: var(--bg-elevated);
+}
+
 .meta {
   font-size: var(--font-xs);
   color: var(--text-tertiary);
@@ -108,6 +113,12 @@
 
 .row.selected td {
   background: var(--accent-light) !important;
+}
+
+/* P2: 键盘导航高亮 */
+.row.highlighted td {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* ---- Name ---- */
@@ -225,6 +236,11 @@
 
 .retryBtn:hover {
   background: var(--accent-hover);
+}
+
+.retryBtn:active {
+  transform: scale(0.93);
+  box-shadow: 0 0px 0px rgba(49,103,243,0.35);
 }
 
 /* ---- 展开行：打分卡 ---- */

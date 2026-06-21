@@ -5,6 +5,7 @@
 #   2. 哪些指标对该行业不适用 (skip)
 #   3. 行业生命周期判断线索
 #   4. WebSearch 增强关键词 (补充行业特有的搜索维度)
+#   5. v0.7.1: CQ 行业阈值 (供应商挤压绝对值、有息负债率等)
 #
 # 匹配规则: 精确匹配 > 关键字模糊匹配 > 默认规则
 
@@ -19,6 +20,8 @@ IT设备:
   lifecycle_clues:
     -政府采购占比趋势
     -国产替代进度
+  cq_thresholds:
+    supplier_debt_ratio_max: 0.30   # IT供应商账期较短
   websearch_extra:
     - "【公司名】 研发人员 人才结构 员工数量"
     - "【公司名】 客户集中度 前五大客户"
@@ -39,6 +42,8 @@ IT设备:
   lifecycle_clues:
     - 净息差趋势
     - 不良率走势
+  cq_thresholds:
+    supplier_debt_ratio_max: null   # 银行不适用供应商挤压指标
   websearch_extra:
     - "【公司名】 不良率 拨备覆盖率 资产质量"
     - "【公司名】 净息差 非息收入占比"
@@ -54,6 +59,8 @@ IT设备:
   lifecycle_clues:
     - 集采范围是否扩大
     - 研发管线进度
+  cq_thresholds:
+    supplier_debt_ratio_max: 0.35   # 医药商业账期适中
   websearch_extra:
     - "【公司名】 在研管线 临床进度 新药上市"
     - "【公司名】 集采影响 中标情况"
@@ -68,6 +75,8 @@ IT设备:
   lifecycle_clues:
     - 行业渗透率
     - 量价拆分
+  cq_thresholds:
+    supplier_debt_ratio_max: 0.35   # 消费品不该大规模挤占供应商
   websearch_extra:
     - "【公司名】 渠道库存 经销商 终端动销"
     - "【公司名】 市场份额 品牌力 提价能力"
@@ -84,6 +93,8 @@ IT设备:
   lifecycle_clues:
     - 电力市场化改革进度
     - 绿电占比
+  cq_thresholds:
+    supplier_debt_ratio_max: 0.40   # 工程设备采购有一定账期
   websearch_extra:
     - "【公司名】 装机容量 发电量 上网电价"
     - "【公司名】 新能源 绿电装机 政策补贴"
@@ -99,6 +110,8 @@ IT设备:
   lifecycle_clues:
     - 行业销售面积趋势
     - 政策放松/收紧信号
+  cq_thresholds:
+    supplier_debt_ratio_max: 0.60   # 工程行业天然账期长
   websearch_extra:
     - "【公司名】 土地储备 销售金额 去化率"
     - "【公司名】 融资成本 三道红线"
@@ -109,4 +122,6 @@ _default:
   extra_metrics: []
   skip_metrics: []
   lifecycle_clues: []
+  cq_thresholds:
+    supplier_debt_ratio_max: 0.40   # 通用阈值
   websearch_extra: []

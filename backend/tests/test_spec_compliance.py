@@ -54,34 +54,54 @@ def valid_raw_data():
                        "industry": "电力", "list_date": "20100101"},
         "annual_financials": [
             {
-                "year": 2025, "income": {"revenue": 100.0, "net_profit": 20.0, "gross_margin": 60.0, "fin_exp": 1.0},
-                "balance_sheet": {"receivables": 5.0, "inventory": 0, "lt_eqt_invest": 5.0},
+                "year": 2025, "income": {"revenue": 100.0, "net_profit": 20.0, "gross_margin": 60.0, "fin_exp": 1.0, "operate_cost": 40.0},
+                "balance_sheet": {"receivables": 5.0, "inventory": 0, "lt_eqt_invest": 5.0,
+                    "total_assets": 100.0, "total_liabilities": 30.0,
+                    "accounts_payable": 3.0, "notes_payable": 1.0,
+                    "contract_liab": 0, "advance_receipts": 0,
+                    "st_borrow": 5.0, "lt_borrow": 10.0, "bonds_payable": 0, "noncurrent_liab_due_in_1y": 0},
                 "cashflow": {"operating_cf": 30.0, "fcf": 20.0, "depr_amort": 10.0, "finan_exp": 1.0,
-                             "capex": 5.0, "acq_subsidiary": 0},
+                             "capex": 5.0, "acq_subsidiary": 0, "dividend_paid_cf": 10.0},
             },
             {
-                "year": 2024, "income": {"revenue": 90.0, "net_profit": 18.0, "gross_margin": 58.0, "fin_exp": 1.2},
-                "balance_sheet": {"receivables": 4.5, "inventory": 0, "lt_eqt_invest": 5.0},
+                "year": 2024, "income": {"revenue": 90.0, "net_profit": 18.0, "gross_margin": 58.0, "fin_exp": 1.2, "operate_cost": 36.0},
+                "balance_sheet": {"receivables": 4.5, "inventory": 0, "lt_eqt_invest": 5.0,
+                    "total_assets": 90.0, "total_liabilities": 27.0,
+                    "accounts_payable": 2.8, "notes_payable": 0.9,
+                    "contract_liab": 0, "advance_receipts": 0,
+                    "st_borrow": 5.0, "lt_borrow": 10.0, "bonds_payable": 0, "noncurrent_liab_due_in_1y": 0},
                 "cashflow": {"operating_cf": 28.0, "fcf": 18.0, "depr_amort": 9.0, "finan_exp": 1.2,
-                             "capex": 4.0, "acq_subsidiary": 0},
+                             "capex": 4.0, "acq_subsidiary": 0, "dividend_paid_cf": 9.0},
             },
             {
-                "year": 2023, "income": {"revenue": 80.0, "net_profit": 15.0, "gross_margin": 55.0, "fin_exp": 1.5},
-                "balance_sheet": {"receivables": 4.0, "inventory": 0, "lt_eqt_invest": 5.0},
+                "year": 2023, "income": {"revenue": 80.0, "net_profit": 15.0, "gross_margin": 55.0, "fin_exp": 1.5, "operate_cost": 32.0},
+                "balance_sheet": {"receivables": 4.0, "inventory": 0, "lt_eqt_invest": 5.0,
+                    "total_assets": 80.0, "total_liabilities": 24.0,
+                    "accounts_payable": 2.5, "notes_payable": 0.8,
+                    "contract_liab": 0, "advance_receipts": 0,
+                    "st_borrow": 5.0, "lt_borrow": 10.0, "bonds_payable": 0, "noncurrent_liab_due_in_1y": 0},
                 "cashflow": {"operating_cf": 25.0, "fcf": 15.0, "depr_amort": 8.0, "finan_exp": 1.5,
-                             "capex": 3.0, "acq_subsidiary": 0},
+                             "capex": 3.0, "acq_subsidiary": 0, "dividend_paid_cf": 8.0},
             },
             {
-                "year": 2022, "income": {"revenue": 70.0, "net_profit": 13.0, "gross_margin": 53.0, "fin_exp": 1.3},
-                "balance_sheet": {"receivables": 3.5, "inventory": 0, "lt_eqt_invest": 5.0},
+                "year": 2022, "income": {"revenue": 70.0, "net_profit": 13.0, "gross_margin": 53.0, "fin_exp": 1.3, "operate_cost": 28.0},
+                "balance_sheet": {"receivables": 3.5, "inventory": 0, "lt_eqt_invest": 5.0,
+                    "total_assets": 70.0, "total_liabilities": 21.0,
+                    "accounts_payable": 2.2, "notes_payable": 0.7,
+                    "contract_liab": 0, "advance_receipts": 0,
+                    "st_borrow": 5.0, "lt_borrow": 10.0, "bonds_payable": 0, "noncurrent_liab_due_in_1y": 0},
                 "cashflow": {"operating_cf": 23.0, "fcf": 13.0, "depr_amort": 7.0, "finan_exp": 1.3,
-                             "capex": 3.0, "acq_subsidiary": 0},
+                             "capex": 3.0, "acq_subsidiary": 0, "dividend_paid_cf": 7.0},
             },
             {
-                "year": 2021, "income": {"revenue": 60.0, "net_profit": 11.0, "gross_margin": 50.0, "fin_exp": 1.0},
-                "balance_sheet": {"receivables": 3.0, "inventory": 0, "lt_eqt_invest": 5.0},
+                "year": 2021, "income": {"revenue": 60.0, "net_profit": 11.0, "gross_margin": 50.0, "fin_exp": 1.0, "operate_cost": 24.0},
+                "balance_sheet": {"receivables": 3.0, "inventory": 0, "lt_eqt_invest": 5.0,
+                    "total_assets": 60.0, "total_liabilities": 18.0,
+                    "accounts_payable": 2.0, "notes_payable": 0.5,
+                    "contract_liab": 0, "advance_receipts": 0,
+                    "st_borrow": 5.0, "lt_borrow": 10.0, "bonds_payable": 0, "noncurrent_liab_due_in_1y": 0},
                 "cashflow": {"operating_cf": 20.0, "fcf": 10.0, "depr_amort": 6.0, "finan_exp": 1.0,
-                             "capex": 2.0, "acq_subsidiary": 0},
+                             "capex": 2.0, "acq_subsidiary": 0, "dividend_paid_cf": 6.0},
             },
         ],
         "dividend_history": [
@@ -352,6 +372,148 @@ class TestSoftGateBehavior:
             assert "pr_passed" in pool[0], "池中应有pr_passed标记"
             assert "gate_summary" in pool[0], "池中应有gate_summary"
 
+    @pytest.mark.asyncio
+    async def test_pr_excluded_disposable_cash_negative(self, temp_cache_dir, sample_candidates):
+        """v0.6.20: 可支配现金均值 ≤ 0 → 硬排除，不入股池"""
+        coordinator = TurtleCoordinator(cache_dir=temp_cache_dir)
+
+        with patch.object(coordinator, "_validate_raw_data", return_value=True):
+            stocks_for_coordinator = [
+                {"ts_code": c.ts_code, "name": c.name, "industry": c.industry,
+                 "list_date": c.list_date, "total_mv": c.total_mv,
+                 "pe": c.pe, "pb": c.pb, "roe": c.roe,
+                 "dividend_yield": c.dividend_yield,
+                 "gross_margin": c.gross_margin, "debt_ratio": c.debt_ratio}
+                for c in sample_candidates[:1]
+            ]
+
+            # 可支配现金为负：op_cf=5.0, capex=10.0, fin_exp=3.0
+            # per year: 5 - 10 - 0 - 0 - 3 = -8 → 均值 = -8 < 0
+            def fake_yaml_load(f):
+                return {
+                    "meta": {"ts_code": "600000.SH", "name": "测试股0", "data_completeness": "full"},
+                    "basic_info": {"total_mv": 500, "industry": "食品饮料", "list_date": "20100101"},
+                    "annual_financials": [
+                        {
+                            "year": yr,
+                            "income": {"revenue": 100.0, "net_profit": 20.0, "fin_exp": 3.0},
+                            "balance_sheet": {"receivables": 5.0, "inventory": 0, "lt_eqt_invest": 0},
+                            "cashflow": {"operating_cf": 5.0, "fcf": -5.0, "depr_amort": 2.0,
+                                         "finan_exp": 3.0, "capex": 10.0, "acq_subsidiary": 0},
+                        }
+                        for yr in [2025, 2024, 2023, 2022, 2021]
+                    ],
+                    "dividend_history": [
+                        {"year": yr, "dividend_per_share": 0.5, "total_dividend": 50.0}
+                        for yr in [2025, 2024, 2023, 2022, 2021]
+                    ],
+                    "repurchase_history": [],
+                }
+
+            raw_dir = temp_cache_dir / sample_candidates[0].ts_code
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            (raw_dir / "raw_data.yaml").touch()
+
+            with patch("app.services.data_fetcher.DataFetcher") as mock_cls:
+                mock_f = Mock()
+                mock_f.fetch_candidate_data.return_value = Mock(
+                    success_rate=100, total=1, success=1, failed=0, failed_codes=[]
+                )
+                mock_cls.return_value = mock_f
+
+                with patch("builtins.open", create=True):
+                    with patch.object(yaml, "safe_load", side_effect=fake_yaml_load):
+                        pool = await coordinator.run_full_refresh(
+                            stocks=stocks_for_coordinator, fetch_data=True,
+                        )
+
+            # v0.6.20: 可支配现金均值 ≤ 0 → 硬排除，不入股池
+            assert len(pool) == 0, f"可支配现金为负应硬排除，实际池大小: {len(pool)}"
+
+    @pytest.mark.asyncio
+    async def test_pr_excluded_single_vs_multiple(self, temp_cache_dir, sample_candidates):
+        """v0.6.20: 混合场景：正可支配现金保留，负可支配现金排除"""
+        coordinator = TurtleCoordinator(cache_dir=temp_cache_dir)
+
+        with patch.object(coordinator, "_validate_raw_data", return_value=True):
+            stocks_for_coordinator = [
+                {"ts_code": c.ts_code, "name": c.name, "industry": c.industry,
+                 "list_date": c.list_date, "total_mv": c.total_mv,
+                 "pe": c.pe, "pb": c.pb, "roe": c.roe,
+                 "dividend_yield": c.dividend_yield,
+                 "gross_margin": c.gross_margin, "debt_ratio": c.debt_ratio}
+                for c in sample_candidates[:2]
+            ]
+
+            call_count = [0]
+
+            def two_stock_yaml_load(f):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    # Stock 0: 正可支配现金 → 应保留
+                    return {
+                        "meta": {"ts_code": "600000.SH", "name": "测试股0", "data_completeness": "full"},
+                        "basic_info": {"total_mv": 500, "industry": "食品饮料", "list_date": "20100101"},
+                        "annual_financials": [
+                            {
+                                "year": yr,
+                                "income": {"revenue": 100.0, "net_profit": 30.0, "fin_exp": 1.0},
+                                "balance_sheet": {"receivables": 5.0, "inventory": 0, "lt_eqt_invest": 0},
+                                "cashflow": {"operating_cf": 30.0, "fcf": 25.0, "depr_amort": 5.0,
+                                             "finan_exp": 1.0, "capex": 5.0, "acq_subsidiary": 0},
+                            }
+                            for yr in [2025, 2024, 2023, 2022, 2021]
+                        ],
+                        "dividend_history": [
+                            {"year": yr, "dividend_per_share": 0.8, "total_dividend": 80.0}
+                            for yr in [2025, 2024, 2023, 2022, 2021]
+                        ],
+                        "repurchase_history": [],
+                    }
+                else:
+                    # Stock 1: 负可支配现金 → 应排除
+                    return {
+                        "meta": {"ts_code": "600001.SH", "name": "测试股1", "data_completeness": "full"},
+                        "basic_info": {"total_mv": 300, "industry": "化工原料", "list_date": "20100101"},
+                        "annual_financials": [
+                            {
+                                "year": yr,
+                                "income": {"revenue": 50.0, "net_profit": 5.0, "fin_exp": 3.0},
+                                "balance_sheet": {"receivables": 10.0, "inventory": 0, "lt_eqt_invest": 0},
+                                "cashflow": {"operating_cf": 5.0, "fcf": -5.0, "depr_amort": 2.0,
+                                             "finan_exp": 3.0, "capex": 10.0, "acq_subsidiary": 0},
+                            }
+                            for yr in [2025, 2024, 2023, 2022, 2021]
+                        ],
+                        "dividend_history": [
+                            {"year": yr, "dividend_per_share": 0.3, "total_dividend": 30.0}
+                            for yr in [2025, 2024, 2023, 2022, 2021]
+                        ],
+                        "repurchase_history": [],
+                    }
+
+            for c in sample_candidates[:2]:
+                raw_dir = temp_cache_dir / c.ts_code
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                (raw_dir / "raw_data.yaml").touch()
+
+            with patch("app.services.data_fetcher.DataFetcher") as mock_cls:
+                mock_f = Mock()
+                mock_f.fetch_candidate_data.return_value = Mock(
+                    success_rate=100, total=2, success=2, failed=0, failed_codes=[]
+                )
+                mock_cls.return_value = mock_f
+
+                with patch("builtins.open", create=True):
+                    with patch.object(yaml, "safe_load", side_effect=two_stock_yaml_load):
+                        pool = await coordinator.run_full_refresh(
+                            stocks=stocks_for_coordinator, fetch_data=True,
+                        )
+
+            # 只应保留正可支配现金的那只
+            assert len(pool) == 1, f"混合场景应只保留1只，实际池大小: {len(pool)}"
+            assert pool[0]["ts_code"] == "600000.SH", f"保留的应是正可支配现金股"
+
 
 # ════════════════════════════════════════════════════════════════════
 # SPEC v0.3.0: qrv_input.yaml 数据包结构
@@ -471,7 +633,7 @@ class TestQRVAgentOutput:
         assert agent.rule_version == "v2"
 
     def test_qrv_prompt_contains_qrv_framework(self, temp_cache_dir):
-        """QRV prompt 包含 Q/R/V 三维度 (v3: 含 Q3/生意本质/人才/data_sufficiency)"""
+        """QRV prompt 包含 Q/R/V 三维度 (v4: 含 R4 重大事件与资本运作)"""
         from app.services.qrv_agent import QRVAgent
         agent = QRVAgent(cache_dir=temp_cache_dir)
         qrv_input = {
@@ -496,6 +658,10 @@ class TestQRVAgentOutput:
         assert "增长引擎" in prompt, "v3: 应含Q3增长引擎"
         assert "人才结构" in prompt, "v3: 应含人才结构"
         assert "data_sufficiency" in prompt, "v3: 应含data_sufficiency指引"
+        # v4 新增检查
+        assert "重大事件与资本运作" in prompt, "v4: 应含 R4 重大事件与资本运作"
+        assert "extracted_facts" in prompt, "v4: 应含 extracted_facts 板块说明"
+        assert "corporate_events" in prompt, "v4: 应含 corporate_events 引用"
 
     def test_llm_placeholder_when_no_key(self, temp_cache_dir):
         """LLM_API_KEY 未配置时返回占位结果"""
@@ -534,11 +700,38 @@ class TestRuleVersion:
         with open(cq_yaml, "r", encoding="utf-8") as f:
             cq = yaml.safe_load(f)
         assert cq["gate_type"] == "soft", f"CQ gate_type 应为 soft，实际 {cq['gate_type']}"
+        # v0.7.0: 8维度
+        dim_ids = [d["id"] for d in cq["dimensions"]]
+        assert len(dim_ids) == 8, f"CQ rules 应有 8 维度，实际 {len(dim_ids)}: {dim_ids}"
+        assert "pass_condition" in cq
+        assert cq["pass_condition"] == "all"
 
         pr_yaml = rules_dir / "turtle_pr.yaml"
         with open(pr_yaml, "r", encoding="utf-8") as f:
             pr_data = yaml.safe_load(f)
         assert pr_data["gate_type"] == "soft", f"PR gate_type 应为 soft，实际 {pr_data['gate_type']}"
+
+    def test_cq_8dimensions_in_result(self):
+        """v0.7.0: CashQualityResult 包含 dim6/7/8 字段"""
+        from app.strategies.turtle.cash_quality import CashQualityResult
+        result = CashQualityResult(ts_code="000001.SZ")
+        # 验证字段存在
+        assert hasattr(result, "dim6_passed")
+        assert hasattr(result, "dim7_passed")
+        assert hasattr(result, "dim8_passed")
+        # 验证 failed_dimensions 包含 6/7/8
+        result.dim6_passed = False
+        assert 6 in result.failed_dimensions
+
+    def test_cq_8dimensions_in_computed_format(self):
+        """v0.7.0: to_computed_format 包含 dim6-8"""
+        from app.strategies.turtle.cash_quality import CashQualityGate, CashQualityResult
+        gate = CashQualityGate()
+        result = CashQualityResult(ts_code="000001.SZ", overall_passed=True)
+        fmt = gate.to_computed_format(result)
+        assert "dimension_6_fcf_dividend_coverage" in fmt
+        assert "dimension_7_supplier_squeeze" in fmt
+        assert "dimension_8_interest_bearing_debt_trend" in fmt
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -589,3 +782,65 @@ class TestDataFetcherCache:
         result = fetcher.fetch_stock_basic(force=True)
         assert len(result) == 2
         assert "roe" in result.columns
+
+
+# ════════════════════════════════════════════════════════════════════
+# SPEC: v0.7.3 R4 重大事件与资本运作
+# ════════════════════════════════════════════════════════════════════
+
+class TestR4CorporateEvents:
+    """v0.7.3: QRV prompt 含 R4 模块 + data_sufficiency 含 R4"""
+
+    def test_qrv_prompt_contains_r4(self):
+        """turtle_qrv.yaml prompt 含 R4 重大事件与资本运作"""
+        rules_dir = Path(__file__).parent.parent / "rules" / "v2" / "turtle_qrv.yaml"
+        with open(rules_dir, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "R4 重大事件与资本运作" in content, "turtle_qrv.yaml prompt 必须含 R4"
+        assert "corporate_events" in content, "prompt 必须引用 extracted_facts.corporate_events"
+        assert "定增" in content, "prompt 必须提及定增"
+        assert "并购" in content, "prompt 必须提及并购"
+
+    def test_qrv_rules_has_r4_module(self):
+        """turtle_qrv.yaml analysis_framework 含 r4_corporate_events"""
+        rules_dir = Path(__file__).parent.parent / "rules" / "v2" / "turtle_qrv.yaml"
+        with open(rules_dir, "r", encoding="utf-8") as f:
+            qrv = yaml.safe_load(f)
+        framework = qrv.get("analysis_framework", {})
+        resilience = framework.get("resilience", {})
+        modules = resilience.get("modules", [])
+        r4_ids = [m["id"] for m in modules if "r4" in m.get("id", "")]
+        assert len(r4_ids) >= 1, f"analysis_framework.resilience 必须包含 r4 模块, 现有: {[m['id'] for m in modules]}"
+
+    def test_data_sufficiency_has_r4(self):
+        """data_summarizer.py data_sufficiency 含 R4_corporate_events"""
+        ds_path = Path(__file__).parent.parent / "app" / "services" / "data_summarizer.py"
+        with open(ds_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "R4_corporate_events" in content, "data_summarizer 的 data_sufficiency 必须包含 R4_corporate_events"
+
+    def test_websearch_extractor_has_corporate_events(self):
+        """websearch_extractor.py 含 _extract_corporate_events 方法"""
+        from app.services.websearch_extractor import WebSearchExtractor
+        extractor = WebSearchExtractor()
+        assert hasattr(extractor, "_extract_corporate_events"), "WebSearchExtractor 必须有 _extract_corporate_events"
+        # 验证 extract() 返回包含 corporate_events key
+        result = extractor.extract({})
+        assert "corporate_events" in result, "extract() 必须包含 corporate_events key"
+        assert isinstance(result["corporate_events"], list), "corporate_events 应为 list"
+
+    def test_qrv_input_schema_has_extracted_facts(self):
+        """turtle_qrv.yaml input_schema 含 extracted_facts"""
+        rules_dir = Path(__file__).parent.parent / "rules" / "v2" / "turtle_qrv.yaml"
+        with open(rules_dir, "r", encoding="utf-8") as f:
+            qrv = yaml.safe_load(f)
+        sections = qrv.get("input_schema", {}).get("sections", [])
+        section_names = [s.get("name", "") for s in sections]
+        assert "extracted_facts" in section_names, f"input_schema 必须包含 extracted_facts 段, 现有: {section_names}"
+
+    def test_scorecard_has_r4(self):
+        """turtle_qrv.yaml 综合打分卡含 R4 行"""
+        rules_dir = Path(__file__).parent.parent / "rules" / "v2" / "turtle_qrv.yaml"
+        with open(rules_dir, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "R4 重大事件与资本运作" in content, "综合打分卡必须包含 R4 行"

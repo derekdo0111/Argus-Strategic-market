@@ -132,7 +132,9 @@ class TushareClient:
             fields="ts_code,end_date,report_type,total_assets,total_liab,"
                    "accounts_receiv,inventories,goodwill,fix_assets,intan_assets,"
                    "lt_eqt_invest,total_hldr_eqy_exc_min_int,total_hldr_eqy_inc_min_int,"
-                   "total_cur_assets,total_cur_liab",
+                   "total_cur_assets,total_cur_liab,"
+                   "accounts_payable,notes_payable,contract_liab,advance_receipts,"
+                   "st_borrow,lt_borrow,bonds_payable,noncurrent_liab_due_in_1y",
         )
 
     def get_cashflow(

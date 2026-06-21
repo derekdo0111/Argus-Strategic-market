@@ -51,19 +51,21 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000,
-      gcTime: Infinity,       // 永不回收缓存，切换股票秒出
+      gcTime: 30 * 60 * 1000,  // 30分钟回收，避免永久缓旧数据
       retry: 1,
     },
   },
 });
 
-// 预加载股池快照：从本地静态文件预填缓存，外部浏览器首次打开即可秒出数据
+// 预加载股池快照：先显示本地副本保证秒出，再异步从 API 刷新确保数据最新
 async function init() {
   try {
     const res = await fetch('/data/turtle_pool.json');
     if (res.ok) {
       const pool = await res.json();
       queryClient.setQueryData(['stockPool', 'turtle'], pool);
+      // 立即标记为过期，触发后台刷新，确保不展示旧数据
+      queryClient.invalidateQueries({ queryKey: ['stockPool', 'turtle'] });
     }
   } catch {
     // 预加载失败不影响正常流程，useQuery 会自行请求 API

@@ -13,7 +13,7 @@ import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import rehypeSanitize from 'rehype-sanitize';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import ResizablePanel from './ResizablePanel';
 import ScoreCard from './ScoreCard';
 import type { GateResult, AnalysisReport } from '../types';
@@ -33,6 +33,21 @@ interface TocItem {
   children: TocItem[];
 }
 
+// ── Minimum stage display gate (v0.6.22) ──────────────
+// 防止快状态（computing<0.5s / websearch缓存<0.1s）在2秒轮询间隔中被跳过
+// 当后端状态跨越2+级时，前端注入中间阶段，每阶段至少显示 MIN_STAGE_MS
+
+const STAGE_ORDER = ['fetching', 'computing', 'websearch', 'analyzing'] as const;
+
+const STAGE_DEFAULTS: Record<string, { progress: number; message: string }> = {
+  fetching:  { progress: 10, message: '正在拉取财务数据...' },
+  computing: { progress: 30, message: '正在计算 CQ+PR...' },
+  websearch: { progress: 60, message: '正在搜索外部信息...' },
+  analyzing: { progress: 80, message: '正在调用 LLM 分析...' },
+};
+
+const MIN_STAGE_MS = 1500;
+
 // ── Helpers ────────────────────────────────────────────
 
 function slugify(title: string): string {
@@ -43,36 +58,32 @@ function slugify(title: string): string {
     || 'section';
 }
 
-/** 过滤 LLM 角色身份文本 — 去掉 "好的，收到您的指令。作为一名拥有15年A股..." 这类段落 */
-function stripLlmRole(text: string): string {
-  return text
-    // 匹配 LLM 自我角色设定段落，.{5,200} 覆盖最长约 120 字的中文角色陈述
-    .replace(/^(好的[，,]?\s*)?(收到您的指令[。.]?\s*)?作为一名.{2,30}(资深CFA|分析师|价值投资|投资研究|持证人).{5,200}?\n+/gm, '')
-    .replace(/^\*\*分析师[：:]\*\*.*\n+/gm, '')
-    .replace(/^\*\*核心铁律[：:].*\n+/gm, '')
-    .replace(/^在开始前[，,].*\n+/gm, '')
-    .replace(/^我将严格遵循您的.*\n+/gm, '')
-    .replace(/^我将以.{2,30}(身份|角色|分析师).{5,200}?\n+/gm, '')
-    .replace(/^(我的|我们的)(任务目标|分析任务).{5,200}?\n+/gm, '')
-    .trim();
-}
-
-/** 过滤 header 中的 # 一级标题行（避免与组件的股票名 H1 重复） */
-function stripHeaderTitle(header: string): string {
-  return header
-    .replace(/^#\s+.+[\n]+/gm, '')
-    .replace(/^##\s+QRV\s+深度分析报告\s*[\n]+/gm, '')
-    .trim();
+/** 结构性切除：找到第一个 ## 标题，之前的内容全部丢弃。
+ *  不再用正则猜 LLM 会说什么废话（regex 打地鼠），
+ *  只要 prompt 要求 LLM 用 ## 开始正文，preamble 天然被隔离。 */
+function stripPreamble(md: string): string {
+  const firstH2 = md.search(/^## /m);
+  if (firstH2 > 0) return md.slice(firstH2);
+  return md;
 }
 
 /** 预处理 markdown：将 [REF001] 转为 <cite> HTML 标签，由 rehype-raw 安全渲染。
  *  替代原来危险的 injectCitationElements + replaceChild 原生 DOM 操作。 */
 function preprocessCitations(md: string): string {
   return md.replace(
-    /\[([A-Z][-\w]*\d+)\]/g,
+    /\[([A-Z][-\w]*\d+)\](?!\()/g,
     '<cite data-ref="$1" id="cite-$1">[$1]</cite>'
   );
 }
+
+/** v0.7.6: rehype-sanitize schema — 允许 a 标签的 id/name 属性以支持锚点跳转 */
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    a: [...(defaultSchema.attributes?.a || ['href']), 'id', 'name'],
+  },
+};
 
 function parseMarkdown(md: string): { header: string; sections: ReportSection[] } {
   const processed = preprocessCitations(md);
@@ -130,7 +141,7 @@ function extractToc(sections: ReportSection[]): TocItem[] {
 }
 
 function isDefaultExpanded(title: string): boolean {
-  if (/摘要|打分|研判|建议/.test(title)) return true;
+  if (/摘要|打分|研判|建议|参考来源|资料来源|引用/.test(title)) return true;
   return false;
 }
 
@@ -197,6 +208,18 @@ function TableRenderer({ children }: { children?: ReactNode }) {
   );
 }
 
+/** 趋势判断关键词 → CSS class 映射 */
+const TREND_MAP: Record<string, string> = {
+  up: 'trendUp',
+  down: 'trendDown',
+  stable: 'trendStable',
+  '吃老本': 'trendDown',
+  '收缩': 'trendDown',
+  '快速增长': 'trendUp',
+  '中速增长': 'trendUp',
+  '缓慢增长': 'trendUp',
+};
+
 function TdRenderer({ children }: { children?: ReactNode }) {
   const { isScoreTable } = useContext(TableContext);
   const text = typeof children === 'string' ? children : '';
@@ -212,6 +235,18 @@ function TdRenderer({ children }: { children?: ReactNode }) {
     return (
       <td className={styles.tdFail}>
         <span className={styles.badge}>FAIL</span>
+      </td>
+    );
+  }
+
+  // 趋势判断列着色 (up → 绿, down → 红, stable → 灰)
+  const trendClass = TREND_MAP[text];
+  if (trendClass) {
+    return (
+      <td>
+        <span className={styles[trendClass as keyof typeof styles] || styles.trendStable}>
+          {text === 'up' ? '▲ up' : text === 'down' ? '▼ down' : text === 'stable' ? '─ stable' : text}
+        </span>
       </td>
     );
   }
@@ -303,7 +338,7 @@ function TocPanel({
                   <button
                     key={sub.id}
                     className={styles.tocSubLink}
-                    onClick={() => onScrollTo(item.id)}
+                    onClick={() => onScrollTo(sub.id)}
                   >
                     {sub.title}
                   </button>
@@ -380,11 +415,36 @@ export default function ReportViewer({ selectedStock }: ReportViewerProps) {
 
   // ── Analysis progress tracking (multi-stock parallel) ──
 
-  type AnalysisEntry = { status: string; progress: number; message: string };
+  type AnalysisEntry = { status: string; progress: number; message: string; _errType?: string };
 
   const [analysisMap, setAnalysisMap] = useState<Record<string, AnalysisEntry>>({});
   const analysisMapRef = useRef(analysisMap);
   analysisMapRef.current = analysisMap;
+
+
+
+  // ── Guard ④: startedAt tracking for 10-min timeout detection ──
+  const [startedAtMap, setStartedAtMap] = useState<Record<string, number>>({});
+  const startedAtMapRef = useRef(startedAtMap);
+  startedAtMapRef.current = startedAtMap;
+
+  // ── v0.6.22: Minimum stage display gate refs ──
+  // displayedStageRef: 当前 UI 显示的是哪个阶段（用于检测跨越）
+  const displayedStageRef = useRef<Record<string, string>>({});
+  // stageTimerRef: 注入中间阶段的定时器（切换代码时需清理）
+  const stageTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // backendTargetRef: 后端最终目标阶段（注入完成后显示的真实消息）
+  const backendTargetRef = useRef<Record<string, { progress: number; message: string }>>({});
+
+  // 组件卸载时清理所有定时器
+  useEffect(() => {
+    return () => {
+      Object.values(stageTimerRef.current).forEach((t) => clearTimeout(t));
+    };
+  }, []);
+
+  // ── Guard ③: consecutive poll failure counter ──
+  const [consecutiveFailures, setConsecutiveFailures] = useState(0);
 
   // Keep refetchReport stable across polls
   const refetchReportRef = useRef(refetchReport);
@@ -392,6 +452,42 @@ export default function ReportViewer({ selectedStock }: ReportViewerProps) {
 
   // Persistent poller: runs for component lifetime, uses refs to avoid dep churn
   useEffect(() => {
+    // v0.6.22: 阶段链注入工具 — 当后端跳过多阶段时，按 MIN_STAGE_MS 间隔逐个显示
+    const scheduleStageChain = (code: string, fromIdx: number, toIdx: number) => {
+      // 清除旧定时器（后端状态又推进了）
+      if (stageTimerRef.current[code]) {
+        clearTimeout(stageTimerRef.current[code]);
+      }
+      let delay = 0;
+      for (let i = fromIdx; i <= toIdx; i++) {
+        const stageName = STAGE_ORDER[i];
+        const isLast = i === toIdx;
+        const defaults = STAGE_DEFAULTS[stageName];
+        if (!defaults) continue;
+
+        stageTimerRef.current[code] = setTimeout(() => {
+          // 最后阶段用后端真实消息，中间阶段用默认消息
+          const target = isLast ? backendTargetRef.current[code] : null;
+          const entry: AnalysisEntry = isLast && target
+            ? { status: stageName, progress: target.progress, message: target.message }
+            : { status: stageName, progress: defaults.progress, message: defaults.message };
+
+          setAnalysisMap(prev => {
+            // 避免重复设置：如果已经是同一状态且同一进度就跳过
+            const cur = prev[code];
+            if (cur?.status === entry.status && cur?.progress === entry.progress) return prev;
+            return { ...prev, [code]: entry };
+          });
+          displayedStageRef.current[code] = stageName;
+          if (isLast) {
+            delete stageTimerRef.current[code];
+            delete backendTargetRef.current[code];
+          }
+        }, delay);
+        delay += MIN_STAGE_MS;
+      }
+    };
+
     const interval = setInterval(async () => {
       const map = analysisMapRef.current;
       const activeCodes = Object.entries(map)
@@ -407,21 +503,92 @@ export default function ReportViewer({ selectedStock }: ReportViewerProps) {
         }),
       );
 
+      // Guard ③: track consecutive poll failures
+      const allFailed = results.every(r => r.status === 'rejected');
+      if (allFailed && results.length > 0) {
+        setConsecutiveFailures(prev => prev + 1);
+      } else {
+        setConsecutiveFailures(0);
+      }
+
       setAnalysisMap(prev => {
         const next = { ...prev };
         let changed = false;
         for (const r of results) {
           if (r.status === 'fulfilled') {
             const [code, data] = r.value;
-            const entry = {
+            const entry: AnalysisEntry = {
               status: data.status as string,
               progress: (data.progress ?? 0) as number,
               message: (data.message ?? '') as string,
             };
             const old = prev[code];
-            if (!old || old.status !== entry.status || old.progress !== entry.progress || old.message !== entry.message) {
+
+            // v0.6.21: guard — 轮询返回 not_started 时不覆盖 onMutate 乐观状态
+            if (entry.status === 'not_started' && old?.status === 'fetching') continue;
+
+            // v0.6.22: 终态 → 立即显示，清除所有注入定时器
+            if (['done', 'error', 'timeout'].includes(entry.status)) {
+              if (stageTimerRef.current[code]) {
+                clearTimeout(stageTimerRef.current[code]);
+                delete stageTimerRef.current[code];
+              }
+              delete displayedStageRef.current[code];
+              delete backendTargetRef.current[code];
+              if (!old || old.status !== entry.status || old.progress !== entry.progress) {
+                next[code] = entry;
+                changed = true;
+              }
+              continue;
+            }
+
+            // v0.6.22: 非终态 — 阶段跳过检测 + 注入
+            const oldIdx = old ? (STAGE_ORDER as readonly string[]).indexOf(old.status) : -1;
+            const newIdx = (STAGE_ORDER as readonly string[]).indexOf(entry.status);
+            if (newIdx < 0) {
+              // 未知状态：直接应用
+              if (!old || old.status !== entry.status || old.progress !== entry.progress || old.message !== entry.message) {
+                next[code] = entry;
+                changed = true;
+              }
+              continue;
+            }
+
+            if (oldIdx < 0) {
+              // 后端首次返回状态
+              if (newIdx === 0) {
+                // 正常从 fetching 开始
+                next[code] = entry;
+                changed = true;
+                displayedStageRef.current[code] = entry.status;
+              } else {
+                // 后端已跳过 ≥1 阶段 — 从 fetching 开始注入
+                backendTargetRef.current[code] = { progress: entry.progress, message: entry.message };
+                scheduleStageChain(code, 0, newIdx);
+              }
+              continue;
+            }
+
+            // 已有旧状态
+            if (newIdx <= oldIdx) {
+              // 同级或回退：仅刷新进度/消息
+              if (old.progress !== entry.progress || old.message !== entry.message) {
+                next[code] = entry;
+                changed = true;
+              }
+            } else if (newIdx === oldIdx + 1) {
+              // 相邻推进 — 已至少有 2s 轮询间隔 ≥ MIN_STAGE_MS，直接显示
+              if (stageTimerRef.current[code]) {
+                clearTimeout(stageTimerRef.current[code]);
+                delete stageTimerRef.current[code];
+              }
               next[code] = entry;
               changed = true;
+              displayedStageRef.current[code] = entry.status;
+            } else {
+              // 跨越 ≥2 阶段 — 注入中间阶段
+              backendTargetRef.current[code] = { progress: entry.progress, message: entry.message };
+              scheduleStageChain(code, oldIdx + 1, newIdx);
             }
           }
         }
@@ -437,46 +604,135 @@ export default function ReportViewer({ selectedStock }: ReportViewerProps) {
     if (!selectedStock) return;
     const entry = analysisMap[selectedStock.ts_code];
     if (entry?.status === 'done') {
-      const timer = setTimeout(() => {
-        refetchReportRef.current();
-        // Clean up done entry so it doesn't re-trigger
-        setAnalysisMap(prev => {
-          if (prev[selectedStock.ts_code]?.status !== 'done') return prev;
-          const next = { ...prev };
-          delete next[selectedStock.ts_code];
-          return next;
-        });
-      }, 800);
-      return () => clearTimeout(timer);
+      refetchReportRef.current();
     }
   }, [analysisMap, selectedStock]);
+
+  // Guard ⑥: clean up done entry only when reportData actually arrives
+  useEffect(() => {
+    if (!selectedStock || !reportData?.report_markdown) return;
+    setAnalysisMap(prev => {
+      if (prev[selectedStock.ts_code]?.status !== 'done') return prev;
+      const next = { ...prev };
+      delete next[selectedStock.ts_code];
+      return next;
+    });
+    setStartedAtMap(prev => {
+      if (!(selectedStock.ts_code in prev)) return prev;
+      const next = { ...prev };
+      delete next[selectedStock.ts_code];
+      return next;
+    });
+  }, [reportData, selectedStock]);
+
+  // ── Guard ②: mount-time status probe (F5 refresh recovery) ──
+  useEffect(() => {
+    if (!selectedStock) return;
+    const code = selectedStock.ts_code;
+    axios.get(`/api/stocks/${code}/analyze/status`)
+      .then(({ data }) => {
+        if (data.status && !['done', 'error', 'not_started'].includes(data.status)) {
+          setAnalysisMap(prev => ({
+            ...prev,
+            [code]: {
+              status: data.status,
+              progress: data.progress ?? 0,
+              message: data.message ?? '',
+            },
+          }));
+        }
+      })
+      .catch(() => {}); // silent fail, polling will retry
+  }, [selectedStock]);
+
+  // ── Guard ⑧: visibilitychange refresh ──
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const map = analysisMapRef.current;
+      const activeCodes = Object.keys(map).filter(k => !['done', 'error'].includes(map[k].status));
+      if (activeCodes.length === 0) return;
+      activeCodes.forEach(code => {
+        axios.get(`/api/stocks/${code}/analyze/status`).then(({ data }) => {
+          if (!data.status || ['done', 'error', 'not_started'].includes(data.status)) return;
+          setAnalysisMap(prev => {
+            const old = prev[code];
+            const newProgress = data.progress ?? 0;
+            if (old?.status === data.status && old?.progress === newProgress) return prev;
+            return { ...prev, [code]: { status: data.status, progress: newProgress, message: data.message ?? '' } };
+          });
+        }).catch(() => {});
+      });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
+  // ── Guard ④: timeout detection (every 15s) ──
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const map = analysisMapRef.current;
+      const startedAt = startedAtMapRef.current;
+      let changed = false;
+      const next = { ...map };
+      for (const [code, entry] of Object.entries(map)) {
+        if (['done', 'error', 'timeout'].includes(entry.status)) continue;
+        if (startedAt[code] && now - startedAt[code] > 10 * 60 * 1000) {
+          next[code] = { status: 'timeout', progress: 0, message: '分析超时（超过10分钟），请重试' };
+          changed = true;
+        }
+      }
+      if (changed) setAnalysisMap(next);
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []); // uses refs
 
   // Analyze mutation — per-stock tracking via analysisMap
   const analyzeMutation = useMutation({
     mutationFn: async (tsCode: string) => {
       await axios.post(`/api/stocks/${tsCode}/analyze`);
     },
-    onSuccess: (_data, tsCode) => {
+    onMutate: (tsCode) => {
+      // v0.6.21: 用 onMutate 提前设初始状态（mutationFn 执行前即触发），
+      // 确保点击瞬间就看到进度提示，不等 POST 返回。
+      setStartedAtMap(prev => ({ ...prev, [tsCode]: Date.now() }));
+      setConsecutiveFailures(0);
       setAnalysisMap(prev => ({
         ...prev,
         [tsCode]: { status: 'fetching', progress: 0, message: '正在拉取财务数据...' },
       }));
     },
     onError: (error: unknown, tsCode) => {
+      // Guard ⑦: distinguish POST failure vs Task failure
       let errMsg = '请求失败，请确认后端服务已启动';
+      let errType = 'mutation';
       if (error && typeof error === 'object') {
-        const axiosErr = error as { response?: { data?: { detail?: string } }; message?: string };
-        errMsg = axiosErr.response?.data?.detail || axiosErr.message || errMsg;
+        const axiosErr = error as { response?: { data?: { detail?: string }; status?: number }; message?: string };
+        if (axiosErr.response?.status === 409 || axiosErr.response?.data?.detail?.includes('已在运行中')) {
+          errMsg = axiosErr.response?.data?.detail || '分析任务已在运行中';
+          errType = 'task';
+        } else {
+          errMsg = axiosErr.response?.data?.detail || axiosErr.message || errMsg;
+        }
       }
       setAnalysisMap(prev => ({
         ...prev,
-        [tsCode]: { status: 'error', progress: 0, message: errMsg },
+        [tsCode]: { status: 'error', progress: 0, message: errMsg, _errType: errType },
       }));
     },
   });
 
   // Derived: current selected stock's analysis status
   const currentStatus = selectedStock ? analysisMap[selectedStock.ts_code] : undefined;
+
+  // ── Button state derivation ──
+  const isAnalyzing = currentStatus &&
+    !['done', 'error', 'timeout'].includes(currentStatus.status);
+  const isError = currentStatus?.status === 'error';
+  const isTimeout = currentStatus?.status === 'timeout';
+  const isSuccess = currentStatus?.status === 'done';
+  const showNetworkWarning = consecutiveFailures >= 5 && isAnalyzing;
 
   // ── Empty State ────────────────────────
   if (!selectedStock) {
@@ -500,46 +756,92 @@ export default function ReportViewer({ selectedStock }: ReportViewerProps) {
   }
 
   if (!reportData?.report_markdown || reportError) {
-    const isAnalyzing = currentStatus &&
-      !['done', 'error'].includes(currentStatus.status);
-    const isError = currentStatus?.status === 'error';
-
     return (
       <div className={styles.emptyState}>
         <GateSummary data={gateData} />
         <div className={styles.emptyText}>
-          {isAnalyzing ? '正在分析中...' : isError ? '分析失败' : '暂无分析报告'}
+          {isAnalyzing ? '正在分析中...' : isTimeout ? '分析超时' : isError ? '分析失败' : isSuccess ? '分析完成' : '暂无分析报告'}
         </div>
         <div className={styles.emptyHint}>
-          {isAnalyzing
-            ? `${selectedStock.name}（${selectedStock.ts_code}）${currentStatus.message}`
-            : isError
-              ? `${currentStatus.message}`
-              : `${selectedStock.name}（${selectedStock.ts_code}）尚未生成 QRV 分析报告`
+          {isSuccess
+            ? `${selectedStock.name}（${selectedStock.ts_code}）分析完成，正在加载报告...`
+            : isAnalyzing
+              ? `${selectedStock.name}（${selectedStock.ts_code}）${currentStatus?.message || ''}`
+              : isTimeout
+                ? `${selectedStock.name}（${selectedStock.ts_code}）后台任务超过10分钟未响应，可重新触发`
+                : isError
+                  ? currentStatus?.message || '未知错误'
+                  : `${selectedStock.name}（${selectedStock.ts_code}）尚未生成 QRV 分析报告`
           }
         </div>
 
-        {isAnalyzing && (
+        {(isAnalyzing || isTimeout) && (
           <div className={styles.progressBarWrap}>
-            <div className={styles.progressBar} style={{ width: `${currentStatus.progress}%` }} />
+            <div className={styles.progressBar} style={{ width: `${isTimeout ? 100 : currentStatus?.progress || 0}%` }} />
           </div>
         )}
         {isAnalyzing && (
           <div className={styles.progressLabel}>
-            {currentStatus.progress}%
+            {currentStatus?.progress || 0}%
+          </div>
+        )}
+        {isAnalyzing && (
+          <div className={styles.phaseLabel}>
+            {currentStatus?.message || '处理中...'}
           </div>
         )}
 
         <button
-          className={styles.analyzeBtn}
-          disabled={isAnalyzing ?? false}
-          onClick={() => analyzeMutation.mutate(selectedStock.ts_code)}
+          className={
+            isSuccess ? `${styles.analyzeBtn} ${styles.analyzeBtnSuccess}`
+            : isError ? `${styles.analyzeBtn} ${styles.analyzeBtnError}`
+            : isTimeout ? `${styles.analyzeBtn} ${styles.analyzeBtnError}`
+            : isAnalyzing ? `${styles.analyzeBtn} ${styles.analyzeBtnProcessing}`
+            : styles.analyzeBtn
+          }
+          disabled={isAnalyzing || isSuccess || analyzeMutation.isPending}
+          onClick={() => {
+            // Guard ⑤: clear error before retry
+            if (isError || isTimeout) {
+              setAnalysisMap(prev => {
+                const next = { ...prev };
+                delete next[selectedStock.ts_code];
+                return next;
+              });
+            }
+            analyzeMutation.mutate(selectedStock.ts_code);
+          }}
         >
-          {analyzeMutation.isPending ? '提交中...' : isAnalyzing ? '⏳ 分析中...' : '🔍 分析个股'}
+          {isAnalyzing ? (
+            <><span className={styles.buttonSpinner} />{currentStatus?.message || '分析中...'}</>
+          ) : analyzeMutation.isPending ? (
+            <><span className={styles.buttonSpinner} />提交中...</>
+          ) : isSuccess ? (
+            '✅ 分析完成，加载报告中...'
+          ) : isTimeout ? (
+            '⚠️ 分析超时，点击重试'
+          ) : isError ? (
+            '⚠️ 分析失败，点击重试'
+          ) : (
+            '🔍 分析个股'
+          )}
         </button>
+
+        {/* Guard ③: network warning */}
+        {showNetworkWarning && (
+          <div className={styles.warningBox}>
+            ⚠️ 无法获取分析进度，请检查网络连接（连续 {consecutiveFailures} 次失败）
+          </div>
+        )}
+
+        {/* Guard ⑦: error detail for task failures */}
         {isError && (
-          <div className={styles.emptyHint} style={{ color: 'var(--negative)', marginTop: 8 }}>
-            请稍后重试
+          <div className={styles.errorBox}>
+            <strong>{currentStatus?._errType === 'task'
+              ? '⚠️ 任务错误'
+              : '⚠️ 请求错误'
+            }</strong>
+            {currentStatus?.message || '请稍后重试'}
           </div>
         )}
       </div>
@@ -554,7 +856,18 @@ export default function ReportViewer({ selectedStock }: ReportViewerProps) {
       tsCode={selectedStock.ts_code}
       gateData={gateData}
       analysisStatus={currentStatus}
+      isMutating={analyzeMutation.isPending}
+      isError={isError}
+      isTimeout={isTimeout || false}
       onReanalyze={() => {
+        // Guard ⑤: clear error before retry
+        if (isError || isTimeout) {
+          setAnalysisMap(prev => {
+            const next = { ...prev };
+            delete next[selectedStock.ts_code];
+            return next;
+          });
+        }
         analyzeMutation.mutate(selectedStock.ts_code);
       }}
     />
@@ -569,6 +882,9 @@ function ReportContent({
   tsCode,
   gateData,
   analysisStatus,
+  isMutating,
+  isError,
+  isTimeout,
   onReanalyze,
 }: {
   reportMarkdown: string;
@@ -579,10 +895,14 @@ function ReportContent({
     status: string;
     progress: number;
     message: string;
+    _errType?: string;
   } | null;
+  isMutating?: boolean;
+  isError?: boolean;
+  isTimeout?: boolean;
   onReanalyze?: () => void;
 }) {
-  const { header, sections } = useMemo(() => parseMarkdown(reportMarkdown), [reportMarkdown]);
+  const { header, sections } = useMemo(() => parseMarkdown(stripPreamble(reportMarkdown)), [reportMarkdown]);
   const toc = useMemo(() => extractToc(sections), [sections]);
 
   const [expandedSet, setExpandedSet] = useState<Set<string>>(() => {
@@ -670,23 +990,38 @@ function ReportContent({
 
   const scrollToSection = useCallback(
     (id: string) => {
+      // 先确保父 section 展开（子标题需要父级展开才可见）
+      const parentToc = toc.find(t => t.children.some(c => c.id === id));
+      const parentId = parentToc?.id;
       setExpandedSet((prev) => {
-        if (prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.add(id);
-        return next;
+        const needsExpand = parentId && !prev.has(parentId);
+        const selfNeedsExpand = !prev.has(id);
+        if (needsExpand || selfNeedsExpand) {
+          const next = new Set(prev);
+          if (needsExpand) next.add(parentId as string);
+          if (selfNeedsExpand) next.add(id);
+          return next;
+        }
+        return prev;
       });
       setTimeout(() => {
+        // v0.7.6: 优先找 h3 子标题，再 fallback h2 section
+        const h3 = document.querySelector(`h3[id="${CSS.escape(id)}"]`) as HTMLElement | null;
+        if (h3) {
+          h3.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          h3.classList.add(styles.sectionHighlight);
+          setTimeout(() => h3.classList.remove(styles.sectionHighlight), 2000);
+          return;
+        }
         const el = sectionEls.current.get(id);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          // 高亮动画 2 秒
           el.classList.add(styles.sectionHighlight);
           setTimeout(() => el.classList.remove(styles.sectionHighlight), 2000);
         }
       }, 80);
     },
-    []
+    [toc]
   );
 
   const expandAll = () => setExpandedSet(new Set(sections.map((s) => s.id)));
@@ -713,7 +1048,7 @@ function ReportContent({
       h4: ({ children }: { children?: ReactNode }) => (
         <h4 className={styles.h4}>{children}</h4>
       ),
-      a: ({ href, children }: { href?: string; children?: ReactNode }) => {
+      a: ({ href, children, ...rest }: { href?: string; children?: ReactNode; [key: string]: unknown }) => {
         const isExternal = href && /^https?:\/\//.test(href);
         return (
           <a
@@ -721,6 +1056,7 @@ function ReportContent({
             target={isExternal ? '_blank' : undefined}
             rel={isExternal ? 'noopener noreferrer' : undefined}
             className={styles.link}
+            {...rest}
           >
             {children}
           </a>
@@ -759,20 +1095,35 @@ function ReportContent({
             {onReanalyze && (
               <div style={{ marginTop: 0, marginBottom: 16 }}>
                 <button
-                  className={styles.analyzeBtn}
+                  className={
+                    isError ? `${styles.analyzeBtn} ${styles.analyzeBtnError}`
+                    : isTimeout ? `${styles.analyzeBtn} ${styles.analyzeBtnError}`
+                    : (analysisStatus && !['done', 'error', 'timeout'].includes(analysisStatus.status))
+                      ? `${styles.analyzeBtn} ${styles.analyzeBtnProcessing}`
+                    : `${styles.analyzeBtn} ${styles.analyzeBtnOutline}`
+                  }
                   onClick={onReanalyze}
                   disabled={
-                    (analysisStatus &&
-                    !['done', 'error'].includes(analysisStatus.status)) ?? false
+                    isMutating ||
+                    ((analysisStatus &&
+                    !['done', 'error', 'timeout'].includes(analysisStatus.status)) ?? false)
                   }
                 >
-                  {analysisStatus &&
-                  !['done', 'error'].includes(analysisStatus.status)
-                    ? `⏳ ${analysisStatus.message}`
-                    : '🔄 重新分析'}
+                  {(analysisStatus &&
+                    !['done', 'error', 'timeout'].includes(analysisStatus.status)) ? (
+                    <><span className={styles.buttonSpinner} />{analysisStatus.message}</>
+                  ) : isMutating ? (
+                    <><span className={styles.buttonSpinner} />提交中...</>
+                  ) : isTimeout ? (
+                    '⚠️ 分析超时，点击重试'
+                  ) : isError ? (
+                    '⚠️ 分析失败，点击重试'
+                  ) : (
+                    '🔄 重新分析'
+                  )}
                 </button>
                 {analysisStatus &&
-                  !['done', 'error'].includes(analysisStatus.status) && (
+                  !['done', 'error', 'timeout'].includes(analysisStatus.status) && (
                     <div className={styles.progressBarWrap} style={{ marginTop: 8 }}>
                       <div
                         className={styles.progressBar}
@@ -780,35 +1131,32 @@ function ReportContent({
                       />
                     </div>
                   )}
-                {analysisStatus?.status === 'error' && (
-                  <div
-                    className={styles.emptyHint}
-                    style={{ color: 'var(--negative)', marginTop: 4 }}
-                  >
-                    {analysisStatus.message}
+                {analysisStatus &&
+                  !['done', 'error', 'timeout'].includes(analysisStatus.status) && (
+                    <div className={styles.phaseLabel}>
+                      {analysisStatus.message}
+                    </div>
+                  )}
+                {(isError || isTimeout) && (
+                  <div className={styles.errorBox}>
+                    <strong>{isTimeout ? '⏰ 超时错误' : '⚠️ 任务错误'}</strong>
+                    {analysisStatus?.message || '分析未完成，请重试'}
                   </div>
                 )}
               </div>
             )}
 
-            {/* 过滤后的 header（去掉 LLM 角色语 + # 标题） */}
-            {(() => {
-              const cleanHeader = stripLlmRole(stripHeaderTitle(header));
-              if (cleanHeader.trim()) {
-                return (
-                  <div className={styles.reportTitle}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize]} components={mdComponents}>
-                      {cleanHeader}
-                    </ReactMarkdown>
-                  </div>
-                );
-              }
-              return null;
-            })()}
+            {/* header — stripPreamble 已切除第一个 ## 之前的所有内容 */}
+            {header.trim() && (
+              <div className={styles.reportTitle}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]} components={mdComponents}>
+                  {header}
+                </ReactMarkdown>
+              </div>
+            )}
 
             {sections.map((sec) => {
               const open = expandedSet.has(sec.id);
-              const cleanContent = stripLlmRole(sec.content);
               return (
                 <section key={sec.id} id={sec.id} className={styles.section}>
                   <h2
@@ -821,8 +1169,8 @@ function ReportContent({
                   </h2>
                   {open && (
                     <div className={styles.sectionBody}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize]} components={mdComponents}>
-                        {cleanContent}
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]} components={mdComponents}>
+                        {sec.content}
                       </ReactMarkdown>
                     </div>
                   )}

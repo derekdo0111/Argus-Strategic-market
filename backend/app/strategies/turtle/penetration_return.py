@@ -157,7 +157,7 @@ class PenetrationReturnCalculator:
 
         # ── Step 2: 分配比率（5年总额/总额）──
         result.total_disposable_cash_5y = sum(dc_values)
-        result.total_dividend_5y = self._calc_5y_dividend_total(raw_data, recent_5y)
+        result.total_dividend_5y = self._calc_5y_dividend_total(raw_data)
 
         if result.total_disposable_cash_5y > 0:
             # v0.5.3: 全部金额已归一化为亿元，直接除
@@ -234,26 +234,27 @@ class PenetrationReturnCalculator:
 
         lt_eqt_increase = max(0.0, lt_eqt_end - lt_eqt_begin)
 
-        # ⑤ 财务费用（利润表）
+        # ⑤ 财务费用（利润表）— clamp 到 ≥0，利息净收入不反哺 PR
         fin_exp = inc.get("fin_exp", 0.0)
         if math.isnan(fin_exp):
             fin_exp = 0.0
+        fin_exp = max(0.0, fin_exp)
 
         return op_cf - capex - acq_subs - lt_eqt_increase - fin_exp
 
-    def _calc_5y_dividend_total(self, raw_data: dict, recent_5y: list) -> float:
-        """计算5年分红总额（按财年匹配，万元）"""
-        fiscal_years = {f["year"] for f in recent_5y}
+    def _calc_5y_dividend_total(self, raw_data: dict) -> float:
+        """计算5年分红总额（取 dividend_history 最近5个年度，万元）"""
         dividends = raw_data.get("dividend_history", [])
-        recent_dividends = [d for d in dividends if d["year"] in fiscal_years]
 
+        # 按年份降序排序后取最近5年
         year_totals = {}
-        for d in recent_dividends:
+        for d in dividends:
             year = d["year"]
             amt = d.get("total_dividend", 0)
             year_totals[year] = year_totals.get(year, 0) + amt
 
-        return sum(year_totals.values())
+        sorted_years = sorted(year_totals.keys(), reverse=True)[:5]
+        return sum(year_totals[y] for y in sorted_years)
 
     def _calc_5y_avg_repurchase(self, raw_data: dict, recent_5y: list) -> float:
         """计算近5年年均回购注销金额（元），仅计入注销类回购"""

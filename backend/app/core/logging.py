@@ -29,9 +29,7 @@ def setup_logging(log_level: str = "INFO"):
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer()
-            if log_level == "DEBUG"
-            else structlog.processors.JSONRenderer(),
+            structlog.dev.ConsoleRenderer(),  # 个人使用：始终可读，不用 JSON
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,

@@ -42,6 +42,7 @@ class WebSearchExtractor:
             "talent_structure": {},
             "national_policy": [],
             "supply_chain": {},
+            "corporate_events": [],
         }
         company = company_name or ""
 
@@ -68,6 +69,9 @@ class WebSearchExtractor:
 
         # 7. 供应链信息
         result["supply_chain"] = self._extract_supply_chain(all_snippets)
+
+        # 8. 重大事件与资本运作 ★v0.7.3
+        result["corporate_events"] = self._extract_corporate_events(all_snippets)
 
         return result
 
@@ -243,6 +247,170 @@ class WebSearchExtractor:
                 m = downstream_pattern.search(content)
                 if m: result["customer_concentration_pct"] = float(m.group(1))
         return result
+
+    # ── v0.7.3: 重大事件与资本运作提取 ──
+
+    def _extract_corporate_events(self, snippets: list[dict]) -> list[dict]:
+        """提取重大资本运作事件：定增/并购/重组/重大合同/诉讼
+
+        输出 schema:
+        {
+            "type": "placement|merger|restructure|major_contract|litigation",
+            "date": "2026-03",         # best-effort, 可能为空
+            "amount_billion": 83.5,    # 涉及金额(亿元), 可能为 null
+            "target": "新潮传媒",       # 并购标的/交易对手
+            "description": "原文片段",
+            "source": "q_websearch[3]",
+            "confidence": "HIGH|LOW"   # 金额+标的都提取到→HIGH
+        }
+        """
+        events = []
+
+        # ── 1. 定增 (placement) ──
+        placement_pattern = re.compile(
+            r'(?:定增|非公开发行|发行股份|募集资金|配股)'
+            r'.*?(\d+(?:\.\d+)?)\s*(?:亿|元|万元)',
+        )
+        for s in snippets:
+            content = s.get("content", "") + s.get("title", "")
+            m = placement_pattern.search(content)
+            if m:
+                amt_raw = float(m.group(1))
+                # 判断单位: 万元→亿元, 亿元直接使用
+                if "万元" in m.group():
+                    amt = amt_raw / 1e4
+                elif "元" in m.group() and "亿元" not in m.group() and "百亿" not in m.group():
+                    amt = amt_raw / 1e8
+                else:
+                    amt = amt_raw  # 已为亿元或上下文足够
+                events.append({
+                    "type": "placement",
+                    "date": self._extract_date(content),
+                    "amount_billion": round(amt, 2) if amt < 10000 else None,  # 不合理大数→None
+                    "target": None,
+                    "description": m.group()[:120],
+                    "source": f"{s.get('_module', '')}[{s.get('_index', '')}]",
+                    "confidence": "HIGH" if (amt and amt < 10000) else "LOW",
+                })
+
+        # ── 2. 并购 (merger) ──
+        merger_pattern = re.compile(
+            r'(?:收购|并购|取得|要约收购|合并|控股收购)\s*'
+            r'(?P<target>[\u4e00-\u9fffA-Za-z]{2,20}'
+            r'(?:公司|集团|科技|传媒|医疗|医药|银行|保险|证券|基金|文化)?)'
+            r'.*?(\d+(?:\.\d+)?)\s*(?:亿|元|万元)?',
+        )
+        for s in snippets:
+            content = s.get("content", "") + s.get("title", "")
+            m = merger_pattern.search(content)
+            if m:
+                target = m.group("target").strip()
+                events.append({
+                    "type": "merger",
+                    "date": self._extract_date(content),
+                    "amount_billion": self._parse_amount(m.group(0)),
+                    "target": target if len(target) >= 2 else None,
+                    "description": m.group()[:120],
+                    "source": f"{s.get('_module', '')}[{s.get('_index', '')}]",
+                    "confidence": "HIGH" if target and len(target) >= 2 else "LOW",
+                })
+
+        # ── 3. 重组 (restructure) ──
+        restructure_pattern = re.compile(
+            r'(?:重大资产重组|资产注入|资产置换|借壳上市|整体上市|分拆上市)',
+        )
+        for s in snippets:
+            content = s.get("content", "") + s.get("title", "")
+            m = restructure_pattern.search(content)
+            if m:
+                events.append({
+                    "type": "restructure",
+                    "date": self._extract_date(content),
+                    "amount_billion": None,
+                    "target": None,
+                    "description": m.group()[:120],
+                    "source": f"{s.get('_module', '')}[{s.get('_index', '')}]",
+                    "confidence": "LOW",
+                })
+
+        # ── 4. 重大合同 (major_contract) ──
+        contract_pattern = re.compile(
+            r'(?:中标|签约|签署|签下).*?(?:合同|协议|订单)'
+            r'.*?(\d+(?:\.\d+)?)\s*(?:亿|元|万)',
+        )
+        for s in snippets:
+            content = s.get("content", "") + s.get("title", "")
+            m = contract_pattern.search(content)
+            if m:
+                events.append({
+                    "type": "major_contract",
+                    "date": self._extract_date(content),
+                    "amount_billion": self._parse_amount(m.group(0)),
+                    "target": None,
+                    "description": m.group()[:120],
+                    "source": f"{s.get('_module', '')}[{s.get('_index', '')}]",
+                    "confidence": "HIGH" if m.group(1) else "LOW",
+                })
+
+        # ── 5. 重大诉讼 (litigation) ──
+        litigation_pattern = re.compile(
+            r'(?:诉讼|仲裁|起诉|被诉|应诉|判决).*?'
+            r'.*?(\d+(?:\.\d+)?)\s*(?:亿|元|万元)?',
+        )
+        for s in snippets:
+            content = s.get("content", "") + s.get("title", "")
+            m = litigation_pattern.search(content)
+            if m:
+                events.append({
+                    "type": "litigation",
+                    "date": self._extract_date(content),
+                    "amount_billion": self._parse_amount(m.group(0)),
+                    "target": None,
+                    "description": m.group()[:120],
+                    "source": f"{s.get('_module', '')}[{s.get('_index', '')}]",
+                    "confidence": "LOW",
+                })
+
+        # 去重：按 type + description 前 30 字符
+        seen = set()
+        deduped = []
+        for e in events:
+            key = (e["type"], e["description"][:30])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(e)
+        return deduped[:10]  # 最多 10 条
+
+    @staticmethod
+    def _extract_date(text: str) -> Optional[str]:
+        """从文本中提取日期 (YYYY-MM 或 YYYY)"""
+        # YYYY年MM月
+        m = re.search(r'(\d{4})\s*年\s*(\d{1,2})\s*月', text)
+        if m:
+            return f"{m.group(1)}-{int(m.group(2)):02d}"
+        # YYYY-MM
+        m = re.search(r'(\d{4})-(\d{1,2})', text)
+        if m:
+            return f"{m.group(1)}-{int(m.group(2)):02d}"
+        # 仅年份
+        m = re.search(r'(\d{4})年', text)
+        if m:
+            return m.group(1)
+        return None
+
+    @staticmethod
+    def _parse_amount(text: str) -> Optional[float]:
+        """从文本中解析金额（亿元）"""
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:亿|元|万)', text)
+        if not m:
+            return None
+        amt = float(m.group(1))
+        if "亿" in m.group():
+            return round(amt, 2) if amt < 10000 else None
+        elif "万" in m.group():
+            return round(amt / 1e4, 4)  # 万元→亿元
+        else:
+            return round(amt / 1e8, 6)  # 元→亿元
 
     def to_yaml_string(self, websearch_data: dict, company_name: str = "") -> str:
         """输出为 YAML 字符串"""

@@ -1,3 +1,5 @@
+import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
 import styles from './Sidebar.module.css';
 
 // ── SVG 图标组件 ─────────────────────────────────────
@@ -36,6 +38,24 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ collapsed = false }: SidebarProps) {
+  const { data: health } = useQuery({
+    queryKey: ['health'],
+    queryFn: async () => {
+      const { data } = await axios.get('/api/health');
+      return data as { version: string };
+    },
+    staleTime: Infinity,
+  });
+
+  const { data: status } = useQuery({
+    queryKey: ['status'],
+    queryFn: async () => {
+      const { data } = await axios.get('/api/stocks/status');
+      return data as { data_updated_at: string };
+    },
+    staleTime: 60 * 60 * 1000,
+  });
+
   return (
     <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
       <div className={styles.header}>
@@ -43,7 +63,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
           <span className={styles.logoIcon}>A</span>
           {!collapsed && 'Argus'}
         </div>
-        {!collapsed && <span className={styles.subtitle}>Investment Strategy v0.6.7</span>}
+        {!collapsed && <span className={styles.subtitle}>Investment Strategy {health?.version || 'v0.6.15'}</span>}
       </div>
 
       <nav className={styles.nav}>
@@ -65,7 +85,7 @@ export default function Sidebar({ collapsed = false }: SidebarProps) {
 
       {!collapsed && (
         <div className={styles.footer}>
-          数据来源：Tushare · 2026-06-19
+          数据来源：Tushare · {status?.data_updated_at || '—'}
         </div>
       )}
     </aside>

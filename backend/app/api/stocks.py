@@ -9,7 +9,7 @@ import yaml
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Path as PathParam, Query
+from fastapi import APIRouter, HTTPException, Path as PathParam, Query, Response
 from pydantic import BaseModel
 
 from app.core.config import settings  # v0.6.15: 统一走 settings 路径
@@ -108,7 +108,7 @@ _pool_cache: dict = {"data": None, "timestamp": 0}
 _gates_cache: Dict[str, dict] = {}   # ts_code → {"data": ..., "ts": ...}
 _analysis_cache: Dict[str, dict] = {}
 
-_POOL_CACHE_TTL = 300      # 5 分钟
+_POOL_CACHE_TTL = 3600     # 1 小时（个人用：只有手动刷新才变）
 _ITEM_CACHE_TTL = 600      # 10 分钟 (gates / analysis)
 
 
@@ -126,13 +126,29 @@ def _cache_set(cache: dict, key: str, data):
 # ── routes ─────────────────────────────────────────────
 
 
+@router.get("/status")
+async def get_data_status():
+    """返回数据新鲜度（turtle_pool.json 最后修改时间）"""
+    pool_file = CACHE_DIR / "turtle_pool.json"
+    if not pool_file.exists():
+        return {"data_updated_at": None, "status": "no_data"}
+    from datetime import datetime
+    mtime = os.path.getmtime(pool_file)
+    return {
+        "data_updated_at": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d"),
+        "status": "ok",
+    }
+
+
 @router.get("/pool/{strategy_id}", response_model=list[StockPoolItem])
 async def get_stock_pool(
     strategy_id: str,
+    response: Response,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
     """获取策略股池列表（读 turtle_pool.json，5分钟缓存，按 PR 降序）"""
+    response.headers["Cache-Control"] = "no-store"
     now = time.time()
 
     # 命中缓存直接返回
@@ -263,11 +279,37 @@ async def _run_analysis_background(ts_code: str):
             status_callback=update_status,
         )
         update_status("done", "分析完成", 100)
+        # v0.7.7: 分析完成 → 回填 QRV 分数到股池缓存，前端立即看到分数更新
+        if _pool_cache["data"] is not None:
+            name = _load_name_map().get(ts_code, "")
+            stock_dir = CACHE_DIR / f"{name}_{ts_code}" if name else None
+            if stock_dir and stock_dir.is_dir():
+                qrv_path = stock_dir / "qrv_analysis.json"
+                if qrv_path.exists():
+                    try:
+                        qrv_data = _read_yaml(qrv_path)
+                        new_scores = qrv_data.get("scores")
+                        for item in _pool_cache["data"]:
+                            if item.ts_code == ts_code:
+                                item.scores = new_scores
+                                break
+                    except Exception:
+                        pass
+        # P2: done 状态 5 分钟后自动清理，避免内存无限膨胀
+        async def _cleanup_done():
+            await asyncio.sleep(300)
+            _analysis_tasks.pop(ts_code, None)
+        asyncio.create_task(_cleanup_done())
     except Exception as e:
         import traceback
         err_msg = f"分析失败: {str(e)}"
         update_status("error", err_msg, 0)
         _logger.error(f"[{ts_code}] 后台分析异常:\n{traceback.format_exc()}")
+        # P2: error 状态 5 分钟后自动清理
+        async def _cleanup_error():
+            await asyncio.sleep(300)
+            _analysis_tasks.pop(ts_code, None)
+        asyncio.create_task(_cleanup_error())
 
 
 # ── routes ─────────────────────────────────────────────
@@ -282,6 +324,19 @@ async def trigger_stock_analysis(ts_code: str = PathParam(..., pattern=r"^\d{6}\
     """
     # 防止重复提交
     existing = _analysis_tasks.get(ts_code)
+    if existing and existing.get("status") not in ("done", "error"):
+        # 检查是否超时（>30 分钟未完成，视为僵尸任务）
+        started_at = existing.get("started_at", "")
+        if started_at:
+            from datetime import datetime, timedelta
+            try:
+                start = datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+                if datetime.now() - start > timedelta(minutes=30):
+                    logger.warning(f"[{ts_code}] 任务超时({existing['status']})，允许重新提交")
+                    _analysis_tasks.pop(ts_code, None)
+                    existing = None
+            except ValueError:
+                pass
     if existing and existing.get("status") not in ("done", "error"):
         return {
             "ts_code": ts_code,

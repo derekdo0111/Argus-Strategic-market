@@ -1,7 +1,7 @@
 {
   "name": "investment-strategy-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.7.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,17 +13,14 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.60.0",
-    "@tanstack/react-virtual": "^3.11.0",
     "axios": "^1.7.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.0",
-    "react-router-dom": "^6.28.0",
     "react-syntax-highlighter": "^15.6.0",
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
-    "remark-gfm": "^4.0.0",
-    "zustand": "^5.0.0"
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",
