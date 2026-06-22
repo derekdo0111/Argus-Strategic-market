@@ -4,6 +4,147 @@ All notable changes to Investment Strategy project.
 
 ---
 
+## v0.7.11 (2026-06-22)
+
+### Fixed — 股池 QRV 评分栏不显示分数
+
+#### 问题
+后台分析完成后，前端股池 QRV 栏目永远显示 `"—"`。根因是 `qrv_agent.py` 仅在 `qrv_analysis.json` 中保存 `meta`/`gate_status`/`llm_raw_response`/`tokens_used`，但从 LLM 输出的「综合打分卡」表格中提取 `scores` 结构化数据。
+
+LLM 确实生成了各维度评分（如 Q1=8, Q2=9, V3=9, 综合=7.7），但这些数字嵌在 markdown 文本中从未被解析。
+
+#### 修复
+- **`qrv_agent.py`**: 新增 `_parse_scores()` 静态方法，用正则从 LLM markdown 输出的「综合打分卡」表格提取 Q1-Q3/R1-R4/V1-V3 10 维度分数 + 综合总分
+- `_parse_scores()` 自动计算 Q/R/V 加权均分
+- `analyze_async()` 写完 `qrv_analysis.json` 时同步写入 `scores` 字段
+- 已有回填逻辑（`stocks.py` L282-297）在分析完成时自动将 scores 回填到股池内存缓存，前端无需等缓存过期即可看到
+
+#### 后端兼容
+- 已分析完成的个股需要**重新分析**才能在 `qrv_analysis.json` 中生成 `scores` 字段
+- 不重新分析 → `scores=None` → 股池仍显示 `"—"`（无破坏性）
+- 新分析的个股自动带 scores
+
+### Files Changed
+- `backend/app/services/qrv_agent.py` — +`_parse_scores()` (~60行) + JSON 输出加 `scores`
+- `docs/CONTEXT.md` — 版本号 0.7.7 → 0.7.11
+- `backend/app/strategies/turtle/turtle-coordinator.md` — 版本号
+- `backend/app/core/config.py` — 版本号 0.7.9 → 0.7.11
+- `backend/pyproject.toml` — 版本号 0.7.9 → 0.7.11
+- `CHANGELOG.md` — 本条目
+
+---
+
+## v0.7.10 (2026-06-22)
+
+### Added — 引用跳转金色闪烁动画 + Path B 内部链接高亮整行
+
+#### 问题
+1. 跳转后的淡蓝色高亮动画太弱，用户不易察觉目标行
+2. 只有 `<cite>` 路径（Path A）有高亮，内部链接 `[A1](#a1)`（Path B）走浏览器原生 hash 跳转 → 完全没有高亮提示
+
+#### 修复
+
+##### 1. 动画升级（CSS）
+- 废弃 `refFlash` / `sectionFlash` 淡蓝色渐隐 → 统一替换为 `jumpFlash` 金色闪烁
+- 颜色：`rgba(255, 193, 7, 0.38)` → 金色，比之前的蓝色醒目得多
+- 时长：2s → 1.5s（更紧凑的反馈感）
+- `refRowHighlight` 和 `sectionHighlight` 共用同一动画
+
+##### 2. Path B 内部链接高亮（TSX）
+- `handleCiteClick` → 升级为 `handleContentClick` 统一点击处理器
+- Path A (cite 标签)：保持原有逻辑 + 使用新 `jumpFlash` 动画
+- Path B (内部链接 `a[href^="#"]`)：
+  - `e.preventDefault()` 阻止浏览器原生 hash 跳转
+  - 通过 `document.getElementById()` 找到目标锚点
+  - 用 `el.closest('tr')` 定位整行 → 金色闪烁 1.5s
+  - 若目标在折叠 section 中 → 展开全部 section → 350ms 后重试
+- 提取公共 `flashTarget()` 工具函数，两路径复用
+
+##### 3. scrollToSection 同步
+- `setTimeout` 移除 class 时间：2000ms → 1500ms（匹配 CSS 动画时长）
+
+#### 测试
+- `citation-jump.test.tsx` 新增 3 个 Path B 高亮测试：锚点在 tr 内、多行锚点独立、链接-锚点匹配
+- 37/37 vitest 全部通过（原 34 + 新增 3）
+
+### Files Changed
+- `frontend/src/components/ReportViewer.module.css` — 合并 refFlash + sectionFlash → jumpFlash 金色闪烁
+- `frontend/src/components/ReportViewer.tsx` — handleCitClick → handleContentClick (+Path B + flashTarget)
+- `frontend/tests/citation-jump.test.tsx` — +3 个 Path B 高亮测试
+- `frontend/package.json` — 版本 0.7.9 → 0.7.10
+- `CHANGELOG.md` — 本条目
+
+### Verified
+- ✅ 37/37 vitest 全部通过
+- ✅ TypeScript 新增代码零错误（预存 2 个与本次无关）
+
+---
+
+## v0.7.9 (2026-06-22)
+
+### Fixed — 链接跳转覆盖范围扩展（窄匹配 → 宽匹配）
+
+#### 问题
+`preprocessCitations` Step 2 正则只匹配 `[A-Z][-\w]*\d+` 引用格式（如 `[A1]`、`[W-q-3]`），但 LLM 可能产生其他格式的内部链接：
+- 纯小写：`[abc](#abc)`
+- 小写+连字符：`[some-link](#some-link)`
+- 下划线：`[REF_001](#ref_001)`
+- 中文字符：`[中文锚点](#中文锚点)`
+
+这些链接的 href 不加 `user-content-` 前缀，而 `rehype-sanitize` 给目标 id 自动加前缀 → **href 和 id 不匹配 → 点击无跳转**。
+
+#### 修复
+- `preprocessCitations` Step 2 正则从窄匹配：
+  ```
+  /\[([A-Z][-\w]*\d+)\]\(#(?!user-content-)([-\w]+)\)/g
+  ```
+  → 宽匹配：
+  ```
+  /\[([^\]]+)\]\(#(?!user-content-)([^)]+)\)/g
+  ```
+- 现在**任意** `[文字](#锚点)` 格式的 markdown 内部链接都会被加上 `user-content-` 前缀
+
+#### 测试
+- `citation-jump.test.tsx` 新增 8 个边界测试：纯小写、连字符、下划线、中文锚点、数字锚点、外部链接不受影响等
+- 34/34 vitest 全部通过
+
+### Files Changed
+- `frontend/src/components/ReportViewer.tsx` — Step 2 正则窄→宽匹配
+- `frontend/tests/citation-jump.test.tsx` — +8 个边界测试
+- `frontend/package.json` — 版本 0.7.8 → 0.7.9
+- `CHANGELOG.md` — 本条目
+
+### Verified
+- ✅ 34/34 vitest 全部通过
+- ✅ TypeScript 零编译错误
+
+---
+
+## v0.7.8 (2026-06-22)
+
+### Fixed — 引用跳转功能回归修复（先测试后代码）
+
+#### 根因诊断（vitest 单元测试驱动）
+1. **`<a id="a1">` 锚点被跳过**：`rehype-sanitize` 默认给所有 `id` 加 `user-content-` 前缀，导致 `<a href="#a1">` 和 `<a id="user-content-a1">` 不匹配
+2. **`<cite>` 标签被清除**：`defaultSchema.tagNames` 不含 `cite`，且属性名需用 camelCase（`dataRef` 非 `data-ref`）
+
+#### 修复内容
+- `preprocessCitations` 新增 Step 2：`[A1](#a1)` → `[A1](#user-content-a1)`，同步 href 匹配 sanitize 输出
+- `sanitizeSchema.tagNames` 添加 `cite`
+- `sanitizeSchema.attributes.cite` 使用 camelCase：`['dataRef', 'id', 'className']`
+- `sanitizeSchema.attributes.a` 添加 `['id', /.*/]`, `['name', /.*/]` 正则形式
+- 新增 `tests/citation-jump.test.tsx`：26 个 vitest 单元测试全覆盖两条引用路径
+- 新增 `vitest.config.ts` + `tests/setup.ts` + `npm run test:unit` 脚本
+- 安装 vitest@3, jsdom, @testing-library/react 等测试依赖
+
+### Added
+- `frontend/tests/citation-jump.test.tsx` — 26 个单元测试
+- `frontend/vitest.config.ts`
+- `frontend/tests/setup.ts`
+- `npm run test:unit` / `npm run test:unit:watch`
+
+---
+
 ## v0.7.7 (2026-06-22)
 
 ### Fixed — 三项前端修复 + 股池分数实时更新

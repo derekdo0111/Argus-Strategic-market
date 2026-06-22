@@ -67,21 +67,37 @@ function stripPreamble(md: string): string {
   return md;
 }
 
-/** 预处理 markdown：将 [REF001] 转为 <cite> HTML 标签，由 rehype-raw 安全渲染。
- *  替代原来危险的 injectCitationElements + replaceChild 原生 DOM 操作。 */
+/** 预处理 markdown：
+ *  1. [REF001] → <cite data-ref="REF001" id="cite-REF001">[REF001]</cite>
+ *  2. [任意文字](#锚点) → [任意文字](#user-content-锚点) — 同步 rehype-sanitize 的 id 前缀，
+ *     匹配所有 markdown 内部链接（不仅引用格式），保证 href 与 <a id="user-content-xxx"> 锚点匹配。
+ *     rehype-sanitize 会自动给所有 id 加 "user-content-" 前缀（安全机制），无法关闭。 */
 function preprocessCitations(md: string): string {
-  return md.replace(
+  // Step 1: [REF001] standalone → <cite>（不含括号后缀说明不是 markdown 链接）
+  md = md.replace(
     /\[([A-Z][-\w]*\d+)\](?!\()/g,
     '<cite data-ref="$1" id="cite-$1">[$1]</cite>'
   );
+  // Step 2: 任意 markdown 内部链接 [text](#anchor) → href 加 user-content- 前缀匹配 sanitize 输出
+  md = md.replace(
+    /\[([^\]]+)\]\(#(?!user-content-)([^)]+)\)/g,
+    '[$1](#user-content-$2)'
+  );
+  return md;
 }
 
-/** v0.7.6: rehype-sanitize schema — 允许 a 标签的 id/name 属性以支持锚点跳转 */
+/** v0.7.9: rehype-sanitize schema — 允许未加前缀的 a[id/name] 锚点 + cite 标签 + cite[data-ref/id]
+ *  v0.7.6 的 bug：直接把 'id' 加到 attributes.a 中，rehype-sanitize 会自动加 "user-content-" 前缀
+ *  导致 <a href="#a1"> 和 <a id="user-content-a1"> 不匹配，跳转失效。
+ *  正确做法：用正则数组形式 ['id', RegExp('.*')] → 允许任意 id 值且不加前缀。
+ *  cite 默认不在 tagNames 中，需显式加入。 */
 const sanitizeSchema = {
   ...defaultSchema,
+  tagNames: [...defaultSchema.tagNames, 'cite'],
   attributes: {
     ...defaultSchema.attributes,
-    a: [...(defaultSchema.attributes?.a || ['href']), 'id', 'name'],
+    a: [...(defaultSchema.attributes?.a || ['href']), ['id', /.*/], ['name', /.*/]],
+    cite: ['dataRef', 'id', 'className'],
   },
 };
 
@@ -945,38 +961,70 @@ function ReportContent({
     []
   );
 
-  const handleCiteClick = useCallback(
+  /** v0.7.10: 统一点击处理器 — Path A (cite 引用) + Path B (内部链接 [A1](#a1))
+   *  两路径共用金色闪烁动画 jumpFlash，高亮目标行 1.5s */
+  const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
       const target = e.target as HTMLElement;
+
+      // ── 通用高亮工具：找到 target 的父 tr 行（整行高亮） ──
+      const flashTarget = (el: HTMLElement) => {
+        const row = el.closest('tr');
+        const ht = row || el;
+        ht.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        ht.classList.add(styles.refRowHighlight);
+        setTimeout(() => ht.classList.remove(styles.refRowHighlight), 5000);
+      };
+
+      // ═══════════ Path A: cite 引用跳转 ═══════════
       const citeEl = target.closest('cite') as HTMLElement | null;
-      if (!citeEl || !citeEl.dataset.ref) return;
-      const refId = citeEl.dataset.ref;
-      const refSection = sections.find((s) => /参考来源|资料来源/.test(s.title));
-      if (refSection) {
-        setExpandedSet((prev) => {
-          if (prev.has(refSection.id)) return prev;
-          const next = new Set(prev);
-          next.add(refSection.id);
-          return next;
-        });
-      }
-      // 加大延迟确保 expand 动画完成 + DOM 渲染
-      setTimeout(() => {
-        const row = document.getElementById(`ref-row-${refId}`);
-        if (row) {
-          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          row.classList.add(styles.refRowHighlight);
-          setTimeout(() => row.classList.remove(styles.refRowHighlight), 2000);
-        } else if (refSection) {
-          // 兜底：找不到具体行时滚动到参考来源 section
-          const el = sectionEls.current.get(refSection.id);
-          el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          el?.classList.add(styles.sectionHighlight);
-          setTimeout(() => el?.classList.remove(styles.sectionHighlight), 2000);
+      if (citeEl?.dataset.ref) {
+        const refId = citeEl.dataset.ref;
+        const refSection = sections.find((s) => /参考来源|资料来源/.test(s.title));
+        if (refSection) {
+          setExpandedSet((prev) => {
+            if (prev.has(refSection.id)) return prev;
+            const next = new Set(prev);
+            next.add(refSection.id);
+            return next;
+          });
         }
-      }, 350);
+        setTimeout(() => {
+          const row = document.getElementById(`ref-row-${refId}`);
+          if (row) {
+            flashTarget(row);
+          } else if (refSection) {
+            const el = sectionEls.current.get(refSection.id);
+            el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            el?.classList.add(styles.sectionHighlight);
+            setTimeout(() => el?.classList.remove(styles.sectionHighlight), 5000);
+          }
+        }, 350);
+        return;
+      }
+
+      // ═══════════ Path B: 内部链接跳转 ([A1](#a1) → <a href="#user-content-a1">) ═══════════
+      const linkEl = target.closest('a[href^="#"]') as HTMLAnchorElement | null;
+      if (linkEl) {
+        e.preventDefault();
+        const href = linkEl.getAttribute('href');
+        if (!href) return;
+        const anchorId = href.slice(1); // 去掉 #
+
+        const anchor = document.getElementById(anchorId);
+        if (anchor) {
+          flashTarget(anchor);
+        } else {
+          // 目标在折叠的 section 中 → 展开全部，延迟后重试
+          setExpandedSet(new Set(sections.map((s) => s.id)));
+          setTimeout(() => {
+            const retry = document.getElementById(anchorId);
+            if (retry) flashTarget(retry);
+          }, 350);
+        }
+      }
     },
-    [sections]
+    [sections, styles.refRowHighlight, styles.sectionHighlight]
   );
 
   const toggleExpand = useCallback((id: string) => {
@@ -1010,14 +1058,14 @@ function ReportContent({
         if (h3) {
           h3.scrollIntoView({ behavior: 'smooth', block: 'start' });
           h3.classList.add(styles.sectionHighlight);
-          setTimeout(() => h3.classList.remove(styles.sectionHighlight), 2000);
+          setTimeout(() => h3.classList.remove(styles.sectionHighlight), 5000);
           return;
         }
         const el = sectionEls.current.get(id);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'start' });
           el.classList.add(styles.sectionHighlight);
-          setTimeout(() => el.classList.remove(styles.sectionHighlight), 2000);
+          setTimeout(() => el.classList.remove(styles.sectionHighlight), 5000);
         }
       }, 80);
     },
@@ -1083,7 +1131,7 @@ function ReportContent({
         />
       }
       right={
-        <main className={styles.main} onClick={handleCiteClick}>
+        <main className={styles.main} onClick={handleContentClick}>
           <div className={styles.contentInner}>
             <h1 className={styles.reportH1}>
               {stockName} {tsCode}

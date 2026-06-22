@@ -472,12 +472,18 @@ cite {
   color: var(--accent-primary);
 }
 
+/* ---- 跳转高亮动画（金色闪烁，1.5s）---- */
 .refRowHighlight {
-  animation: refFlash 2s ease;
+  animation: jumpFlash 1.5s ease-out;
 }
 
-@keyframes refFlash {
-  0%   { background: var(--accent-light); }
+.sectionHighlight {
+  animation: jumpFlash 1.5s ease-out;
+}
+
+@keyframes jumpFlash {
+  0%   { background: rgba(255, 193, 7, 0.38); }
+  25%  { background: rgba(255, 193, 7, 0.25); }
   100% { background: transparent; }
 }
 
@@ -555,16 +561,6 @@ cite {
 .floatingBack:active {
   transform: scale(0.93);
   box-shadow: 0 1px 3px rgba(49,103,243,0.3);
-}
-
-/* ---- 跳转高亮动画 ---- */
-.sectionHighlight {
-  animation: sectionFlash 2s ease-out;
-}
-
-@keyframes sectionFlash {
-  0%   { background: var(--accent-light); }
-  100% { background: transparent; }
 }
 
 /* ---- 超链接样式 ---- */

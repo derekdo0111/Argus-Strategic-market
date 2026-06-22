@@ -97,8 +97,19 @@ class QRVAgent:
         md_path = stock_dir / "qrv_analysis.md"
         json_path = stock_dir / "qrv_analysis.json"
 
+        markdown_content = llm_result.get("markdown", "")
         with open(md_path, "w", encoding="utf-8") as f:
-            f.write(llm_result.get("markdown", ""))
+            f.write(markdown_content)
+
+        # v0.7.11: 从 LLM markdown 输出中提取结构化打分
+        scores = self._parse_scores(markdown_content)
+        if scores:
+            print(f"[Scores] Extracted: total={scores.get('total', 'N/A')}, "
+                  f"Q={scores.get('Q_weighted', 'N/A')}, "
+                  f"R={scores.get('R_weighted', 'N/A')}, "
+                  f"V={scores.get('V_weighted', 'N/A')}")
+        else:
+            print(f"[Scores] Warning: could not extract scores from LLM output")
 
         json_report = {
             "meta": {
@@ -115,6 +126,7 @@ class QRVAgent:
             "llm_raw_response": llm_result.get("raw", ""),
             "tokens_used": tokens,
             "truncated": llm_result.get("truncated", False),  # v0.5.2
+            "scores": scores,  # v0.7.11: 结构化评分
         }
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(json_report, f, ensure_ascii=False, indent=2)
@@ -230,6 +242,79 @@ class QRVAgent:
             ts_code=ts_code,
             qrv_input_yaml=combined_data,
         )
+
+    @staticmethod
+    def _parse_scores(markdown: str) -> dict | None:
+        """从 LLM 输出的「综合打分卡」表格提取结构化分数
+
+        匹配格式：
+        | Q | Q1 生意本质+商业模式 | **8** | ... |
+        | **综合** | — | **7.8/10** | — | — |
+
+        Returns:
+            dict with Q1_business, Q2_moat, Q3_growth, R1_environment,
+            R2_management, R3_control, R4_events, V1_value_trap,
+            V2_percentile, V3_stress_test, total, Q_weighted, R_weighted, V_weighted
+            解析失败返回 None
+        """
+        import re
+
+        # 模块名 → 输出 key 映射
+        MODULE_MAP: dict[str, str] = {
+            "Q1": "Q1_business",
+            "Q2": "Q2_moat",
+            "Q3": "Q3_growth",
+            "R1": "R1_environment",
+            "R2": "R2_management",
+            "R3": "R3_control",
+            "R4": "R4_events",
+            "V1": "V1_value_trap",
+            "V2": "V2_percentile",
+            "V3": "V3_stress_test",
+        }
+
+        scores: dict[str, float] = {}
+
+        # 逐行匹配：| Q/R/V | 模块名 ... | 分数 | ...
+        line_pattern = re.compile(
+            r'\|\s*(Q|R|V)\s*\|'
+            r'\s*(Q\d|R\d|V\d)\s*[^|]*\|'
+            r'\s*\**(\d+(?:\.\d+)?)\**\s*\|'
+        )
+
+        for line in markdown.splitlines():
+            m = line_pattern.match(line.strip())
+            if m:
+                module_key = m.group(2)  # e.g. "Q1", "R4", "V3"
+                try:
+                    score = float(m.group(3))
+                except ValueError:
+                    continue
+                if module_key in MODULE_MAP:
+                    scores[MODULE_MAP[module_key]] = score
+
+        # 提取综合总分：| **综合** | — | **7.8/10** | — | — |
+        total_match = re.search(
+            r'\*\*综合\*\*\s*\|[^|]*\|\s*\**(\d+(?:\.\d+)?)/10\**',
+            markdown,
+        )
+        if total_match:
+            scores["total"] = float(total_match.group(1))
+
+        if not scores:
+            return None
+
+        # 计算 Q/R/V 加权均分
+        for group, keys in [
+            ("Q_weighted", ["Q1_business", "Q2_moat", "Q3_growth"]),
+            ("R_weighted", ["R1_environment", "R2_management", "R3_control", "R4_events"]),
+            ("V_weighted", ["V1_value_trap", "V2_percentile", "V3_stress_test"]),
+        ]:
+            group_scores = [scores[k] for k in keys if k in scores]
+            if group_scores:
+                scores[group] = round(sum(group_scores) / len(group_scores), 1)
+
+        return scores
 
     @staticmethod
     def _default_prompt() -> str:

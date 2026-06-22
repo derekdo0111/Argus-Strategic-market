@@ -32,12 +32,19 @@
 - 每次改完代码后跑 `pytest tests\ -v` + `cd frontend && npm test` 确认无回归
 - 现有后端 76 测试 + 前端 13 测试 全部通过 (v2026-06-19)
 
-## 版本号 (v0.7.7 / 2026-06-22)
-- 全局版本: `pyproject.toml`, `main.py`, `config.py`, `CONTEXT.md` — 统一为 `0.7.7`
+## 版本号 (v0.7.11 / 2026-06-22)
+- 全局版本: `pyproject.toml`, `main.py`, `config.py`, `CONTEXT.md` — 统一为 `0.7.11`
 - 规则版本: 当前使用 **v2**（`rules/v2/` 目录），代码默认值统一为 `"v2"`
-- `CHANGELOG.md` 从 v0.1.0 开始记录, 当前最新 v0.7.7
+- `CHANGELOG.md` 从 v0.1.0 开始记录, 当前最新 v0.7.11
 - `rules/v2/` 包含 turtle_pr / turtle_cash_quality / turtle_screener / turtle_qrv / industry_profiles 五份规则
 - `.env.example` 已脱敏 (2026-06-17)，v0.6.15 补全 TAVILY_API_KEY/CORS_ORIGINS/DEBUG 等 5 项
+
+## v0.7.11 股池 QRV 评分栏不显示分数 (2026-06-22)
+- **根因**: `qrv_agent.py` 写的 `qrv_analysis.json` 从来不包含 `scores` 字段。LLM 确实输出了综合打分卡表格（如 Q1=8, V3=9, 综合=7.7），但数字嵌在 markdown 文本中从未被解析。
+- **修复**: 新增 `QRVAgent._parse_scores()` 静态方法，用正则从 LLM markdown 的「综合打分卡」表格自动提取 Q1-Q3/R1-R4/V1-V3 10 维度分数 + 综合总分 + Q/R/V 加权均分
+- **涉及文件**: qrv_agent.py (+~60行), CONTEXT.md, coordinator.md, config.py, pyproject.toml, CHANGELOG.md, memory
+- **测试**: 98/98 pytest 通过 ✅, 冒烟测试: 全表/小数/N(A跳过/无表格 全部正确 ✅
+- **后向兼容**: 已分析个股需重新分析才有 scores（不重新分析 → scores=None → `"—"`，无破坏）
 
 ## v0.7.7 三项前端修复 + 股池分数实时更新 (2026-06-22)
 - **问题1 引用跳转失效**: a组件丢弃id属性 → `mdComponents.a` 转发 `{...rest}`；参考来源默认折叠无锚点 → `isDefaultExpanded` 加正则；cite无点击暗示 → CSS全局 `cursor:pointer`
